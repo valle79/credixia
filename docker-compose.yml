@@ -1,0 +1,55 @@
+name: lending-portal
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lending}
+      POSTGRES_USER: ${POSTGRES_USER:-lending}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lending_dev_only}
+    ports:
+      - '${POSTGRES_PORT:-55432}:5432'
+    volumes:
+      - lending-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-lending};Username=${POSTGRES_USER:-lending};Password=${POSTGRES_PASSWORD:-lending_dev_only}
+      Api__ExposeOpenApi: 'false'
+      OpenTelemetry__OtlpEndpoint: ''
+      Database__MigrateOnStartup: ${DB_MIGRATE_ON_STARTUP:-false}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:-development-only-signing-key-change-me-1234567890}
+      Auth__PublicUrl: ${AUTH_PUBLIC_URL:-http://localhost:3000}
+      Bootstrap__Email: ${BOOTSTRAP_EMAIL:-}
+      Bootstrap__Password: ${BOOTSTRAP_PASSWORD:-}
+      Bootstrap__FullName: ${BOOTSTRAP_FULL_NAME:-Platform Administrator}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '${API_PORT:-5111}:8080'
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      - api
+    ports:
+      - '${WEB_PORT:-3000}:8080'
+    restart: unless-stopped
+
+volumes:
+  lending-postgres:

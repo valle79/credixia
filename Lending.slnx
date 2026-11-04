@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/backend/" />
+  <Folder Name="/backend/src/">
+    <Project Path="backend/src/Lending.Api/Lending.Api.csproj" />
+    <Project Path="backend/src/Lending.Application/Lending.Application.csproj" />
+    <Project Path="backend/src/Lending.Domain/Lending.Domain.csproj" />
+    <Project Path="backend/src/Lending.Infrastructure/Lending.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/backend/tests/">
+    <Project Path="backend/tests/Lending.ArchitectureTests/Lending.ArchitectureTests.csproj" />
+    <Project Path="backend/tests/Lending.IntegrationTests/Lending.IntegrationTests.csproj" />
+    <Project Path="backend/tests/Lending.UnitTests/Lending.UnitTests.csproj" />
+  </Folder>
+</Solution>
