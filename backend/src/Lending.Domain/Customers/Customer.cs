@@ -86,15 +86,24 @@ public sealed class Customer : Entity
         string documentType,
         string documentNumber,
         string fullName,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        DateOnly? birthDate = null)
     {
         if (tenantId == Guid.Empty)
         {
             throw new ArgumentException("Tenant identifier cannot be empty.", nameof(tenantId));
         }
 
+        // Validar edad mínima si se proporciona fecha de nacimiento
+        if (birthDate.HasValue)
+        {
+            ValidateMinimumAge(birthDate.Value, DateOnly.FromDateTime(now.Date));
+        }
+
         EnsureTimestamp(now);
-        return new Customer(tenantId, type, documentType, documentNumber, fullName, now);
+        var customer = new Customer(tenantId, type, documentType, documentNumber, fullName, now);
+        customer.BirthDate = birthDate;
+        return customer;
     }
 
     public void Update(
@@ -112,6 +121,12 @@ public sealed class Customer : Entity
         DateTimeOffset now)
     {
         EnsureTimestamp(now);
+
+        // Validar edad mínima si se proporciona fecha de nacimiento
+        if (birthDate.HasValue)
+        {
+            ValidateMinimumAge(birthDate.Value, DateOnly.FromDateTime(now.Date));
+        }
 
         FullName = NormalizeName(fullName);
         BirthDate = birthDate;
@@ -270,6 +285,34 @@ public sealed class Customer : Entity
         if (now == default)
         {
             throw new ArgumentException("A valid timestamp is required.", nameof(now));
+        }
+    }
+
+    private static void ValidateMinimumAge(DateOnly birthDate, DateOnly currentDate)
+    {
+        const int MinimumAgeYears = 18;
+
+        // Validar que la fecha de nacimiento no sea futura
+        if (birthDate > currentDate)
+        {
+            throw new DomainException("customer.birthdate.future", "La fecha de nacimiento no puede ser futura.");
+        }
+
+        // Calcular la edad exacta
+        var age = currentDate.Year - birthDate.Year;
+
+        // Ajustar si aún no ha cumplido años este año
+        if (currentDate.Month < birthDate.Month ||
+            (currentDate.Month == birthDate.Month && currentDate.Day < birthDate.Day))
+        {
+            age--;
+        }
+
+        if (age < MinimumAgeYears)
+        {
+            throw new DomainException(
+                "customer.age.underage",
+                $"El cliente debe tener al menos {MinimumAgeYears} años para poder registrarse.");
         }
     }
 }

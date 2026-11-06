@@ -7,10 +7,11 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: string
   hint?: string
   helperText?: string
+  success?: boolean
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, error, hint, helperText, id, ...props }, ref) => {
+  ({ className, label, error, hint, helperText, success, id, ...props }, ref) => {
     const inputId = id || label?.toLowerCase().replace(/\s+/g, '-')
     const help = hint ?? helperText
 
@@ -28,11 +29,16 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           className={cn(
             'block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 disabled:bg-slate-50 disabled:text-slate-500',
             error && 'border-red-500 focus:border-red-500 focus:ring-red-500/20',
+            success && !error && 'border-green-500 focus:border-green-500 focus:ring-green-500/20',
             className
           )}
           {...props}
         />
-        {help && !error && <p className="mt-1 text-xs text-slate-500">{help}</p>}
+        {help && !error && (
+          <p className={cn('mt-1 text-xs', success ? 'text-green-600' : 'text-slate-500')}>
+            {help}
+          </p>
+        )}
         {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
       </div>
     )

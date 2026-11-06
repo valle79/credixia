@@ -15,6 +15,106 @@ import { formatCurrency, formatPercent } from '../lib/format'
 import { getErrorMessage } from '../api/client'
 import type { CreateLoanRequest } from '../api/types'
 
+const PAYMENT_FREQUENCY_DAYS: Record<string, number> = {
+  Daily: 1,
+  Weekly: 7,
+  Biweekly: 15,
+  Monthly: 30,
+  Quarterly: 90,
+  Biannual: 180,
+  Annual: 365,
+}
+
+const PAYMENT_FREQUENCY_LABELS: Record<string, string> = {
+  Daily: 'Diario',
+  Weekly: 'Semanal',
+  Biweekly: 'Quincenal',
+  Monthly: 'Mensual',
+  Quarterly: 'Trimestral',
+  Biannual: 'Semestral',
+  Annual: 'Anual',
+}
+
+const PAYMENT_FREQUENCY_HELP: Record<string, string> = {
+  Daily: 'cada día',
+  Weekly: 'cada 7 días',
+  Biweekly: 'cada 15 días',
+  Monthly: 'cada mes',
+  Quarterly: 'cada 3 meses',
+  Biannual: 'cada 6 meses',
+  Annual: 'cada año',
+}
+
+function parseDateOnly(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return null
+
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+}
+
+function formatDateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10)
+}
+
+function addMonthsClamped(date: Date, months: number): Date {
+  const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1))
+  const lastDay = new Date(
+    Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)
+  ).getUTCDate()
+  target.setUTCDate(Math.min(date.getUTCDate(), lastDay))
+  return target
+}
+
+function addPaymentPeriods(date: Date, frequency: string, periods: number): Date {
+  if (frequency === 'Daily') {
+    date.setUTCDate(date.getUTCDate() + periods)
+    return date
+  }
+  if (frequency === 'Weekly') {
+    date.setUTCDate(date.getUTCDate() + 7 * periods)
+    return date
+  }
+  if (frequency === 'Biweekly') {
+    date.setUTCDate(date.getUTCDate() + 15 * periods)
+    return date
+  }
+  if (frequency === 'Quarterly') {
+    return addMonthsClamped(date, 3 * periods)
+  }
+  if (frequency === 'Biannual') {
+    return addMonthsClamped(date, 6 * periods)
+  }
+  if (frequency === 'Annual') {
+    return addMonthsClamped(date, 12 * periods)
+  }
+  return addMonthsClamped(date, periods)
+}
+
+function calculateFirstPaymentDate(disbursementDate: string, frequency: string): string {
+  const date = parseDateOnly(disbursementDate)
+  if (!date || !frequency) return ''
+
+  return formatDateOnly(addPaymentPeriods(date, frequency, 1))
+}
+
+function calculateTermDays(
+  disbursementDate: string,
+  frequency: string,
+  numberOfPayments: string
+): number {
+  const payments = Number.parseInt(numberOfPayments, 10)
+  if (!frequency || !Number.isFinite(payments) || payments <= 0) return 0
+
+  const disbursement = parseDateOnly(disbursementDate)
+  if (!disbursement) {
+    return (PAYMENT_FREQUENCY_DAYS[frequency] ?? 30) * payments
+  }
+
+  const firstPayment = addPaymentPeriods(new Date(disbursement), frequency, 1)
+  const lastPayment = addPaymentPeriods(new Date(firstPayment), frequency, payments - 1)
+  return Math.max(0, Math.round((lastPayment.getTime() - disbursement.getTime()) / 86_400_000))
+}
+
 export function CreateLoanPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -25,56 +125,13 @@ export function CreateLoanPage() {
   const [customerId, setCustomerId] = useState(searchParams.get('customerId') ?? '')
   const [productId, setProductId] = useState('')
   const [principalAmount, setPrincipalAmount] = useState('')
-  const [frequency, setFrequency] = useState('')
   const [numberOfPayments, setNumberOfPayments] = useState('')
   const [disbursementDate, setDisbursementDate] = useState('')
-  const [firstPaymentDate, setFirstPaymentDate] = useState('')
   const [commissionAmount, setCommissionAmount] = useState('')
   const [customInterestRate, setCustomInterestRate] = useState('')
   const [useCustomRate, setUseCustomRate] = useState(false)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false)
-
-  // Calcular días automáticamente según frecuencia
-  const calculateTermDays = (freq: string, payments: string) => {
-    if (!freq || !payments) return 0
-    
-    const daysPerPeriod: Record<string, number> = {
-      'Daily': 1,
-      'Weekly': 7,
-      'Biweekly': 15,
-      'Monthly': 30,
-      'Quarterly': 90
-    }
-    
-    return daysPerPeriod[freq] * parseInt(payments)
-  }
-
-  const termDays = calculateTermDays(frequency, numberOfPayments)
-
-  const calculateFirstPaymentDate = (dateValue: string, freq: string) => {
-    if (!dateValue || !freq) return ''
-
-    const date = new Date(dateValue)
-    const daysToAdd = freq === 'Daily' ? 1 :
-                      freq === 'Weekly' ? 7 :
-                      freq === 'Biweekly' ? 15 :
-                      freq === 'Monthly' ? 30 :
-                      freq === 'Quarterly' ? 90 : 30
-
-    date.setDate(date.getDate() + daysToAdd)
-    return date.toISOString().split('T')[0]
-  }
-
-  const handleFrequencyChange = (value: string) => {
-    setFrequency(value)
-    setFirstPaymentDate(calculateFirstPaymentDate(disbursementDate, value))
-  }
-
-  const handleDisbursementDateChange = (value: string) => {
-    setDisbursementDate(value)
-    setFirstPaymentDate(calculateFirstPaymentDate(value, frequency))
-  }
 
   const { data: customers } = useQuery({
     queryKey: ['customers', tenant?.id, 'active'],
@@ -91,6 +148,9 @@ export function CreateLoanPage() {
   const selectedProduct = products?.find((p) => p.id === productId)
   const selectedCustomer = customers?.items.find((c) => c.id === customerId)
   const currentPhoto = photoPreview ?? selectedCustomer?.photoUrl ?? null
+  const frequency = selectedProduct?.frequency ?? ''
+  const firstPaymentDate = calculateFirstPaymentDate(disbursementDate, frequency)
+  const termDays = calculateTermDays(disbursementDate, frequency, numberOfPayments)
 
   const handleCustomerChange = (value: string) => {
     setCustomerId(value)
@@ -156,6 +216,8 @@ export function CreateLoanPage() {
       Biweekly: 24,
       Monthly: 12,
       Quarterly: 4,
+      Biannual: 2,
+      Annual: 1,
     }
     const r = rate / (periodsPerYear[selectedProduct.frequency] || 12)
     if (r === 0) return principal / n
@@ -269,7 +331,7 @@ export function CreateLoanPage() {
                     { value: '', label: 'Seleccionar producto...' },
                     ...(products?.map((p) => ({
                       value: p.id,
-                      label: `${p.name} - ${formatPercent(p.interestRate)} ${p.frequency}`,
+                      label: `${p.name} - ${formatPercent(p.interestRate)} ${PAYMENT_FREQUENCY_LABELS[p.frequency] ?? p.frequency}`,
                     })) || []),
                   ]}
                   required
@@ -282,7 +344,7 @@ export function CreateLoanPage() {
                       <li>• Tasa: {formatPercent(selectedProduct.interestRate)} {selectedProduct.interestType}</li>
                       <li>• Monto: {formatCurrency(selectedProduct.minimumAmount, selectedProduct.currency)} - {formatCurrency(selectedProduct.maximumAmount, selectedProduct.currency)}</li>
                       <li>• Plazo: {selectedProduct.minimumTermDays} - {selectedProduct.maximumTermDays} días</li>
-                      <li>• Frecuencia: {selectedProduct.frequency}</li>
+                      <li>• Frecuencia: {PAYMENT_FREQUENCY_LABELS[selectedProduct.frequency] ?? selectedProduct.frequency}</li>
                     </ul>
                   </div>
                 )}
@@ -343,37 +405,17 @@ export function CreateLoanPage() {
                   required
                 />
 
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                    Frecuencia de Pago <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={frequency}
-                    onChange={(e) => handleFrequencyChange(e.target.value)}
-                    className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
-                    required
-                  >
-                    <option value="">Seleccionar frecuencia...</option>
-                    <option value="Daily">📅 Diario (cada día)</option>
-                    <option value="Weekly">📅 Semanal (cada 7 días)</option>
-                    <option value="Biweekly">📅 Quincenal (cada 15 días)</option>
-                    <option value="Monthly">📅 Mensual (cada 30 días)</option>
-                    <option value="Quarterly">📅 Trimestral (cada 90 días)</option>
-                  </select>
-                  {frequency && (
-                    <p className="mt-1 text-xs text-slate-500">
-                      Plazo total: {termDays} días
-                    </p>
-                  )}
-                </div>
-
                 <Input
                   label="Número de Cuotas"
                   type="number"
                   value={numberOfPayments}
                   onChange={(e) => setNumberOfPayments(e.target.value)}
                   min="1"
-                  helperText={frequency ? `Pagos cada ${frequency === 'Daily' ? '1 día' : frequency === 'Weekly' ? '7 días' : frequency === 'Biweekly' ? '15 días' : frequency === 'Monthly' ? '30 días' : '90 días'}` : ''}
+                  helperText={
+                    frequency
+                      ? `Pagos ${PAYMENT_FREQUENCY_HELP[frequency] ?? 'según el producto'}`
+                      : 'La frecuencia se toma del producto seleccionado'
+                  }
                   required
                 />
 
@@ -390,7 +432,7 @@ export function CreateLoanPage() {
                   label="Fecha de Desembolso"
                   type="date"
                   value={disbursementDate}
-                  onChange={(e) => handleDisbursementDateChange(e.target.value)}
+                  onChange={(e) => setDisbursementDate(e.target.value)}
                   required
                 />
 
@@ -398,9 +440,8 @@ export function CreateLoanPage() {
                   label="Fecha Primer Pago"
                   type="date"
                   value={firstPaymentDate}
-                  onChange={(e) => setFirstPaymentDate(e.target.value)}
-                  helperText="Se calcula automáticamente según la frecuencia"
-                  required
+                  disabled
+                  helperText="Se calcula automáticamente según la frecuencia del producto"
                 />
               </div>
             </Card>
@@ -472,7 +513,14 @@ export function CreateLoanPage() {
                 type="submit"
                 className="w-full"
                 isLoading={createMutation.isPending}
-                disabled={!customerId || !productId || !principalAmount || !frequency || !numberOfPayments}
+                disabled={
+                  !customerId ||
+                  !selectedProduct ||
+                  !principalAmount ||
+                  !numberOfPayments ||
+                  !disbursementDate ||
+                  !firstPaymentDate
+                }
               >
                 Crear Préstamo
               </Button>

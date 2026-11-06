@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { platformApi } from '../api/platform.api'
@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Badge } from '../components/ui/Badge'
 import { Card } from '../components/ui/Card'
+import { LogoutConfirmationModal } from '../components/LogoutConfirmationModal'
 import type { TenantOption } from '../api/types'
 
 export function SelectTenantPage() {
@@ -14,6 +15,7 @@ export function SelectTenantPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { user, tenant, switchTenant, logout } = useAuth()
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
 
   const stateTenants = useMemo(() => {
     const state = location.state as { tenants?: TenantOption[] } | null
@@ -76,10 +78,17 @@ export function SelectTenantPage() {
                 : 'Elige una organización para continuar o crea una nueva.'}
             </p>
           </div>
-          <Button variant="ghost" onClick={() => logout()}>
+          <Button variant="ghost" onClick={() => setShowLogoutModal(true)}>
             Cerrar sesión
           </Button>
         </div>
+
+        <LogoutConfirmationModal
+          isOpen={showLogoutModal}
+          onClose={() => setShowLogoutModal(false)}
+          onConfirm={logout}
+          isLoading={false}
+        />
 
         {stateTenants.length > 0 && (
           <Card>

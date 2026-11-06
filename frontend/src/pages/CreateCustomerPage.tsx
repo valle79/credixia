@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { customersApi } from '../api/customers.api'
@@ -8,6 +8,8 @@ import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
 import { getErrorMessage } from '../api/client'
 import { useToast } from '../hooks/useToast'
+import { useDebounce } from '../hooks/useDebounce'
+import { validateMinimumAge, getMaxBirthDate } from '../lib/validation'
 import { ToastContainer } from '../components/ui/ToastContainer'
 import type { CreateCustomerRequest } from '../api/types'
 
@@ -36,6 +38,75 @@ export function CreateCustomerPage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [photoError, setPhotoError] = useState('')
+
+  // Estado para validación de documento
+  const [documentValidation, setDocumentValidation] = useState<{
+    status: 'idle' | 'checking' | 'available' | 'duplicate' | 'error'
+    message: string
+  }>({ status: 'idle', message: '' })
+
+  // Estado para validación de edad
+  const [ageValidation, setAgeValidation] = useState<{
+    isValid: boolean
+    message?: string
+  }>({ isValid: true })
+
+  const debouncedDocumentNumber = useDebounce(formData.documentNumber, 500)
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Validar documento cuando cambie el número con debounce
+  useEffect(() => {
+    const validateDocument = async () => {
+      // No validar si el documento está vacío o es muy corto
+      if (!debouncedDocumentNumber || debouncedDocumentNumber.length < 3) {
+        setDocumentValidation({ status: 'idle', message: '' })
+        return
+      }
+
+      // Cancelar validación anterior si existe
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+
+      abortControllerRef.current = new AbortController()
+      setDocumentValidation({ status: 'checking', message: 'Verificando documento...' })
+
+      try {
+        const result = await customersApi.checkDocumentAvailability(
+          formData.documentType,
+          debouncedDocumentNumber
+        )
+
+        setDocumentValidation({
+          status: result.available ? 'available' : 'duplicate',
+          message: result.message,
+        })
+      } catch (error) {
+        // Ignorar errores de cancelación
+        if (error instanceof Error && error.name === 'CanceledError') {
+          return
+        }
+        setDocumentValidation({
+          status: 'error',
+          message: 'No se pudo verificar el documento',
+        })
+      }
+    }
+
+    validateDocument()
+
+    // Cleanup
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
+  }, [debouncedDocumentNumber, formData.documentType])
+
+  // Limpiar validación cuando cambia el tipo de documento
+  useEffect(() => {
+    setDocumentValidation({ status: 'idle', message: '' })
+  }, [formData.documentType])
 
   const createMutation = useMutation({
     mutationFn: (data: CreateCustomerRequest) => customersApi.create(data),
@@ -71,6 +142,19 @@ export function CreateCustomerPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    // Validar que el documento no esté duplicado
+    if (documentValidation.status === 'duplicate') {
+      toast.error('Documento duplicado', documentValidation.message)
+      return
+    }
+
+    // Validar edad mínima
+    if (!ageValidation.isValid) {
+      toast.error('Edad inválida', ageValidation.message || 'El cliente debe ser mayor de edad')
+      return
+    }
+
     const data: CreateCustomerRequest = {
       ...formData,
       type: formData.type as CreateCustomerRequest['type'],
@@ -81,7 +165,17 @@ export function CreateCustomerPage() {
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }))
+    const { name, value } = e.target
+    
+    setFormData((prev) => ({ ...prev, [name]: value }))
+
+    // Validar edad cuando cambia la fecha de nacimiento
+    if (name === 'birthDate' && value) {
+      const validation = validateMinimumAge(value, 18)
+      setAgeValidation(validation)
+    } else if (name === 'birthDate' && !value) {
+      setAgeValidation({ isValid: true })
+    }
   }
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -193,30 +287,49 @@ export function CreateCustomerPage() {
                 required
               />
 
-              <Input
-                label="Número de Documento"
-                name="documentNumber"
-                value={formData.documentNumber}
-                onChange={handleChange}
-                maxLength={20}
-                required
-              />
+<Input
+  label="Número de Documento"
+  name="documentNumber"
+  value={formData.documentNumber}
+  onChange={handleChange}
+  maxLength={20}
+  {...(
+    documentValidation.status === 'duplicate' ||
+    documentValidation.status === 'error'
+      ? { error: documentValidation.message }
+      : {}
+  )}
+  {...(
+    documentValidation.status === 'checking' ||
+    documentValidation.status === 'available'
+      ? { helperText: documentValidation.message }
+      : {}
+  )}
+  success={documentValidation.status === 'available'}
+  required
+/>
 
-              <Input
-                label="Nombre Completo"
-                name="fullName"
-                value={formData.fullName}
-                onChange={handleChange}
-                required
-              />
+<Input
+  label="Nombre Completo"
+  name="fullName"
+  value={formData.fullName}
+  onChange={handleChange}
+  required
+/>
 
-              <Input
-                label="Fecha de Nacimiento"
-                type="date"
-                name="birthDate"
-                value={formData.birthDate}
-                onChange={handleChange}
-              />
+<Input
+  label="Fecha de Nacimiento"
+  type="date"
+  name="birthDate"
+  value={formData.birthDate}
+  onChange={handleChange}
+  max={getMaxBirthDate(18)}
+  {...(
+    !ageValidation.isValid && ageValidation.message
+      ? { error: ageValidation.message }
+      : {}
+  )}
+/>
 
               <Input
                 label="Teléfono"

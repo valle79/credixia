@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
+import { LogoutConfirmationModal } from '../LogoutConfirmationModal'
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 
@@ -266,10 +267,11 @@ export function RequirePermission({ permission, children }: GuardProps & { permi
 }
 
 export function AppLayout() {
-  const { user, tenant, logout, hasPermission } = useAuth()
+  const { user, tenant, logout, hasPermission, isLoggingOut } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const [isMobileOpen, setIsMobileOpen] = useState(false)
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
   const now = useClock()
 
   const isPlatformArea = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
@@ -318,7 +320,12 @@ export function AppLayout() {
 
   const handleLogout = () => {
     setIsMobileOpen(false)
+    setShowLogoutModal(true)
+  }
+
+  const confirmLogout = () => {
     logout()
+    setShowLogoutModal(false)
   }
 
   const sidebar = (
@@ -434,6 +441,13 @@ export function AppLayout() {
           </div>
         </main>
       </div>
+
+      <LogoutConfirmationModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={confirmLogout}
+        isLoading={isLoggingOut}
+      />
     </div>
   )
 }

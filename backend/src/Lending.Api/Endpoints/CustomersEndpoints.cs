@@ -8,11 +8,16 @@ using Lending.Domain.Identity;
 using Lending.Infrastructure.Persistence;
 using Lending.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Lending.Api.Endpoints;
 
 public static class CustomersEndpoints
 {
+    private const string DocumentNumberUniqueIndex = "IX_customers_TenantId_DocumentNumber";
+    private const string DuplicateDocumentMessage =
+        "Ya existe un cliente registrado con este número de documento en tu empresa";
+
     public static IEndpointRouteBuilder MapCustomersEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/v1/customers")
@@ -55,6 +60,10 @@ public static class CustomersEndpoints
             .WithName("UploadCustomerPhoto")
             .DisableAntiforgery()
             .RequirePermission(Permissions.CustomersManage);
+
+        group.MapGet("/check-document", CheckDocumentAvailabilityAsync)
+            .WithName("CheckDocumentAvailability")
+            .RequirePermission(Permissions.CustomersView);
 
         return endpoints;
     }
@@ -209,16 +218,19 @@ public static class CustomersEndpoints
             return TenantRequired();
         }
 
+        var tenantId = currentUser.TenantId.Value;
+
         Customer customer;
         try
         {
             customer = Customer.Create(
-                currentUser.TenantId.Value,
+                tenantId,
                 Enum.Parse<CustomerType>(request.Type, true),
                 request.DocumentType,
                 request.DocumentNumber,
                 request.FullName,
-                clock.UtcNow);
+                clock.UtcNow,
+                request.BirthDate);
 
             customer.Update(
                 request.FullName,
@@ -242,8 +254,27 @@ public static class CustomersEndpoints
                 detail: exception.Message);
         }
 
+        var documentNumberExists = await dbContext.Customers
+            .AsNoTracking()
+            .AnyAsync(
+                c => c.TenantId == tenantId && c.DocumentNumber == customer.DocumentNumber,
+                cancellationToken);
+
+        if (documentNumberExists)
+        {
+            return DuplicateDocumentConflict();
+        }
+
         dbContext.Customers.Add(customer);
-        await dbContext.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (IsDuplicateDocumentNumberViolation(exception))
+        {
+            return DuplicateDocumentConflict();
+        }
 
         await auditWriter.RecordAsync(
             new AuditEntry(
@@ -488,11 +519,67 @@ public static class CustomersEndpoints
         return TypedResults.NoContent();
     }
 
+    private static async Task<IResult> CheckDocumentAvailabilityAsync(
+        ICurrentUser currentUser,
+        LendingDbContext dbContext,
+        string documentType,
+        string documentNumber,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.TenantId.HasValue)
+        {
+            return TenantRequired();
+        }
+
+        if (string.IsNullOrWhiteSpace(documentNumber) || documentNumber.Length < 3)
+        {
+            return TypedResults.BadRequest(new { available = false, message = "Documento muy corto" });
+        }
+
+        var normalized = documentNumber.Trim().ToUpperInvariant();
+
+        var exists = await dbContext.Customers
+            .AsNoTracking()
+            .AnyAsync(
+                c => c.TenantId == currentUser.TenantId.Value &&
+                     c.DocumentType == documentType &&
+                     c.DocumentNumber == normalized,
+                cancellationToken);
+
+        if (exists)
+        {
+            return TypedResults.Ok(new
+            {
+                available = false,
+                message = DuplicateDocumentMessage
+            });
+        }
+
+        return TypedResults.Ok(new
+        {
+            available = true,
+            message = "Documento disponible para registrar"
+        });
+    }
+
     private static ProblemHttpResult TenantRequired() =>
         TypedResults.Problem(
             statusCode: StatusCodes.Status400BadRequest,
             title: "Organización requerida",
             detail: "Selecciona una organización antes de continuar.");
+
+    private static ProblemHttpResult DuplicateDocumentConflict() =>
+        TypedResults.Problem(
+            statusCode: StatusCodes.Status409Conflict,
+            title: "Documento ya registrado",
+            detail: DuplicateDocumentMessage);
+
+    private static bool IsDuplicateDocumentNumberViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: DocumentNumberUniqueIndex,
+        };
 
     public sealed record CustomerSummary(
         Guid Id,

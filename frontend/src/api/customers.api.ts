@@ -61,4 +61,15 @@ export const customersApi = {
     )
     return response.data
   },
+
+  checkDocumentAvailability: async (
+    documentType: string,
+    documentNumber: string
+  ): Promise<{ available: boolean; message: string }> => {
+    const response = await apiClient.get<{ available: boolean; message: string }>(
+      '/api/v1/customers/check-document',
+      { params: { documentType, documentNumber } }
+    )
+    return response.data
+  },
 }

@@ -44,10 +44,11 @@ export function useAuth() {
 
   const logoutMutation = useMutation({
     mutationFn: () => authApi.logout(),
-    onSuccess: () => {
+    onSettled: () => {
+      // Siempre limpiar la sesión, incluso si la API falla
       clearSession()
       queryClient.clear()
-      navigate('/login')
+      navigate('/login', { replace: true })
     },
   })
 
@@ -85,6 +86,7 @@ export function useAuth() {
     hasPermission,
     login: loginMutation.mutate,
     logout: logoutMutation.mutate,
+    isLoggingOut: logoutMutation.isPending,
     switchTenant: switchTenantMutation.mutate,
     isLoggingIn: loginMutation.isPending,
     loginError: loginMutation.error ? getErrorMessage(loginMutation.error) : null,

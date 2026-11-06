@@ -47,6 +47,19 @@
     outline: 2px solid var(--color-brand-500);
     outline-offset: 2px;
   }
+
+  /* Ocultar spinners de inputs numéricos en Chrome, Safari, Edge, Opera */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  /* Ocultar spinners de inputs numéricos en Firefox */
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
 }
 
 @keyframes slide-in {
