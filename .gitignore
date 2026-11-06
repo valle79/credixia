@@ -21,8 +21,10 @@ yarn-error.log*
 
 # Environment and local secrets
 .env
-.env.*
+.env.local
+.env.*.local
 !.env.example
+!.env.production
 appsettings.Local.json
 appsettings.*.Local.json
 *.pfx
