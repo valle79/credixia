@@ -76,8 +76,8 @@ export function AppShell() {
   const now = useNow()
   const ping = usePing()
   const meta = pageMeta[location.pathname] ?? {
-    title: 'Lending Portal',
-    description: 'Plataforma de gestiÃ³n de crÃ©dito.',
+    title: 'Portal Credixia',
+    description: 'Plataforma de gestion de credito.',
   }
   const connectionState = queryServiceState(ping.isPending, ping.isError)
 
@@ -98,9 +98,9 @@ export function AppShell() {
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-white">
-              Lending Portal
+              Portal Credixia
             </p>
-            <p className="truncate text-xs text-slate-500">OperaciÃ³n de crÃ©dito</p>
+            <p className="truncate text-xs text-slate-500">Operacion de credito</p>
           </div>
         </div>
 
@@ -130,7 +130,7 @@ export function AppShell() {
         <div className="m-3 rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[10px] font-semibold tracking-[0.14em] text-slate-500 uppercase">
-              ConexiÃ³n
+              Conexion
             </span>
             <span
               className={cn(
@@ -222,8 +222,8 @@ export function AppShell() {
 
         <footer className="border-t border-slate-200 px-4 py-4 sm:px-6">
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-1 text-[11px] text-slate-400 sm:flex-row sm:items-center sm:justify-between">
-            <span>Lending Portal Â· OperaciÃ³n en PerÃº</span>
-            <span>Fase 1 Â· Base tÃ©cnica</span>
+            <span>Portal Credixia· Operacion en Peru</span>
+            <span>Fase 1· Base tecnica</span>
           </div>
         </footer>
       </div>

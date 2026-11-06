@@ -705,6 +705,37 @@ namespace Lending.Infrastructure.Persistence.Migrations
                     b.ToTable("loan_products", (string)null);
                 });
 
+            modelBuilder.Entity("Lending.Domain.Loans.EarlySettlement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("LoanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateOnly>("SettlementDate")
+                        .HasColumnType("date");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LoanId");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("early_settlements", (string)null);
+                });
+
             modelBuilder.Entity("Lending.Domain.Loans.Loan", b =>
                 {
                     b.Property<Guid>("Id")
@@ -765,6 +796,9 @@ namespace Lending.Infrastructure.Persistence.Migrations
                     b.Property<int>("NumberOfPayments")
                         .HasColumnType("integer");
 
+                    b.Property<Guid?>("RefinancedFromLoanId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -791,6 +825,45 @@ namespace Lending.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("loans", (string)null);
+                });
+
+            modelBuilder.Entity("Lending.Domain.Loans.LoanRefinancing", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("NewInterestRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<Guid>("NewLoanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("OriginalLoanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateOnly>("RefinancingDate")
+                        .HasColumnType("date");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NewLoanId");
+
+                    b.HasIndex("OriginalLoanId");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("loan_refinancings", (string)null);
                 });
 
             modelBuilder.Entity("Lending.Domain.Platform.PlatformNotification", b =>
@@ -1462,6 +1535,117 @@ namespace Lending.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Lending.Domain.Loans.EarlySettlement", b =>
+                {
+                    b.OwnsOne("Lending.Domain.ValueObjects.Money", "AccruedInterest", b1 =>
+                        {
+                            b1.Property<Guid>("EarlySettlementId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("accrued_interest");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("accrued_interest_currency");
+
+                            b1.HasKey("EarlySettlementId");
+
+                            b1.ToTable("early_settlements");
+
+                            b1.WithOwner()
+                                .HasForeignKey("EarlySettlementId");
+                        });
+
+                    b.OwnsOne("Lending.Domain.ValueObjects.Money", "AmountPaid", b1 =>
+                        {
+                            b1.Property<Guid>("EarlySettlementId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("amount_paid");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("amount_paid_currency");
+
+                            b1.HasKey("EarlySettlementId");
+
+                            b1.ToTable("early_settlements");
+
+                            b1.WithOwner()
+                                .HasForeignKey("EarlySettlementId");
+                        });
+
+                    b.OwnsOne("Lending.Domain.ValueObjects.Money", "OutstandingPrincipal", b1 =>
+                        {
+                            b1.Property<Guid>("EarlySettlementId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("outstanding_principal");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("outstanding_principal_currency");
+
+                            b1.HasKey("EarlySettlementId");
+
+                            b1.ToTable("early_settlements");
+
+                            b1.WithOwner()
+                                .HasForeignKey("EarlySettlementId");
+                        });
+
+                    b.OwnsOne("Lending.Domain.ValueObjects.Money", "SettlementAmount", b1 =>
+                        {
+                            b1.Property<Guid>("EarlySettlementId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("settlement_amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("settlement_amount_currency");
+
+                            b1.HasKey("EarlySettlementId");
+
+                            b1.ToTable("early_settlements");
+
+                            b1.WithOwner()
+                                .HasForeignKey("EarlySettlementId");
+                        });
+
+                    b.Navigation("AccruedInterest")
+                        .IsRequired();
+
+                    b.Navigation("AmountPaid")
+                        .IsRequired();
+
+                    b.Navigation("OutstandingPrincipal")
+                        .IsRequired();
+
+                    b.Navigation("SettlementAmount")
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Lending.Domain.Loans.Loan", b =>
                 {
                     b.OwnsOne("Lending.Domain.ValueObjects.Money", "BalanceAmount", b1 =>
@@ -1687,8 +1871,14 @@ namespace Lending.Infrastructure.Persistence.Migrations
                                 .ValueGeneratedOnAdd()
                                 .HasColumnType("uuid");
 
+                            b1.Property<DateOnly?>("CancelledDate")
+                                .HasColumnType("date");
+
                             b1.Property<DateOnly>("DueDate")
                                 .HasColumnType("date");
+
+                            b1.Property<bool>("IsCancelled")
+                                .HasColumnType("boolean");
 
                             b1.Property<Guid>("LoanId")
                                 .HasColumnType("uuid")
@@ -1888,6 +2078,117 @@ namespace Lending.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("TotalInterest")
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Lending.Domain.Loans.LoanRefinancing", b =>
+                {
+                    b.OwnsOne("Lending.Domain.ValueObjects.Money", "AccruedInterest", b1 =>
+                        {
+                            b1.Property<Guid>("LoanRefinancingId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("accrued_interest");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("accrued_interest_currency");
+
+                            b1.HasKey("LoanRefinancingId");
+
+                            b1.ToTable("loan_refinancings");
+
+                            b1.WithOwner()
+                                .HasForeignKey("LoanRefinancingId");
+                        });
+
+                    b.OwnsOne("Lending.Domain.ValueObjects.Money", "NewPrincipal", b1 =>
+                        {
+                            b1.Property<Guid>("LoanRefinancingId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("new_principal");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("new_principal_currency");
+
+                            b1.HasKey("LoanRefinancingId");
+
+                            b1.ToTable("loan_refinancings");
+
+                            b1.WithOwner()
+                                .HasForeignKey("LoanRefinancingId");
+                        });
+
+                    b.OwnsOne("Lending.Domain.ValueObjects.Money", "OutstandingPrincipal", b1 =>
+                        {
+                            b1.Property<Guid>("LoanRefinancingId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("outstanding_principal");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("outstanding_principal_currency");
+
+                            b1.HasKey("LoanRefinancingId");
+
+                            b1.ToTable("loan_refinancings");
+
+                            b1.WithOwner()
+                                .HasForeignKey("LoanRefinancingId");
+                        });
+
+                    b.OwnsOne("Lending.Domain.ValueObjects.Money", "TotalDebt", b1 =>
+                        {
+                            b1.Property<Guid>("LoanRefinancingId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("total_debt");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("total_debt_currency");
+
+                            b1.HasKey("LoanRefinancingId");
+
+                            b1.ToTable("loan_refinancings");
+
+                            b1.WithOwner()
+                                .HasForeignKey("LoanRefinancingId");
+                        });
+
+                    b.Navigation("AccruedInterest")
+                        .IsRequired();
+
+                    b.Navigation("NewPrincipal")
+                        .IsRequired();
+
+                    b.Navigation("OutstandingPrincipal")
+                        .IsRequired();
+
+                    b.Navigation("TotalDebt")
                         .IsRequired();
                 });
 

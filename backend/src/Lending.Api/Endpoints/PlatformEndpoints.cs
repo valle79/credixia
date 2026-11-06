@@ -51,7 +51,12 @@ public static class PlatformEndpoints
         group.MapPatch("/tenants/{id:guid}/status", UpdateTenantStatusAsync)
             .WithName("UpdatePlatformTenantStatus")
             .RequirePermission(Permissions.PlatformTenantsManage);
-        
+
+        group.MapPost("/tenants/{id:guid}/logo", UploadTenantLogoAsync)
+            .WithName("UploadPlatformTenantLogo")
+            .DisableAntiforgery()
+            .RequirePermission(Permissions.PlatformTenantsManage);
+
         group.MapPost("/tenants/{id:guid}/send-credentials", SendCredentialsViaWhatsAppAsync)
             .WithName("SendTenantCredentialsViaWhatsApp")
             .RequirePermission(Permissions.PlatformTenantsManage);
@@ -91,7 +96,8 @@ public static class PlatformEndpoints
             tenant.Name,
             tenant.Status.ToString(),
             memberCounts.GetValueOrDefault(tenant.Id),
-            tenant.CreatedAt)).ToArray());
+            tenant.CreatedAt,
+            tenant.LogoUrl)).ToArray());
     }
 
     private static async Task<IResult> GetDashboardAsync(
@@ -212,7 +218,7 @@ public static class PlatformEndpoints
 
         // Generar el mensaje de WhatsApp
         var loginUrl = $"{authOptions.Value.PublicUrl.TrimEnd('/')}/login";
-        var message = $"*BIENVENIDO A LENDING PORTAL*%0A%0A"
+        var message = $"*BIENVENIDO A PORTAL CREDIXIA*%0A%0A"
             + $"Tu organizacion *{tenant.Name}* ha sido creada exitosamente.%0A%0A"
             + $"*Credenciales de acceso:*%0A"
             + $"Usuario: {ownerUser.Email.Value}%0A"
@@ -515,7 +521,81 @@ public static class PlatformEndpoints
             tenant.Name,
             tenant.Status.ToString(),
             0,
-            tenant.CreatedAt));
+            tenant.CreatedAt,
+            tenant.LogoUrl));
+    }
+
+    private static async Task<IResult> UploadTenantLogoAsync(
+        Guid id,
+        HttpContext httpContext,
+        ICurrentUser currentUser,
+        LendingDbContext dbContext,
+        IFileUploadService fileUploadService,
+        IAuditWriter auditWriter,
+        IClock clock,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.IsPlatformAdmin)
+        {
+            return PlatformAdminRequired();
+        }
+
+        var tenant = await dbContext.Tenants
+            .SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+
+        if (tenant is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var form = await httpContext.Request.ReadFormAsync(cancellationToken);
+        var logoFile = form.Files.GetFile("logo");
+
+        if (logoFile is null || logoFile.Length == 0)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "Archivo requerido",
+                detail: "Debe proporcionar un logo para la organización.");
+        }
+
+        try
+        {
+            using var stream = logoFile.OpenReadStream();
+            var logoUrl = await fileUploadService.UploadImageAsync(
+                stream,
+                logoFile.FileName,
+                $"tenants/{id}",
+                cancellationToken);
+
+            tenant.SetLogo(logoUrl, clock.UtcNow);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            await auditWriter.RecordAsync(
+                new AuditEntry(
+                    tenant.Id,
+                    currentUser.UserId,
+                    "platform.tenant.logo_updated",
+                    "Tenant",
+                    tenant.Id.ToString(),
+                    AfterJson: JsonSerializer.Serialize(new { tenant.LogoUrl }),
+                    CorrelationId: httpContext.TraceIdentifier,
+                    IpHash: IpHasher.Hash(httpContext.Connection.RemoteIpAddress?.ToString())),
+                cancellationToken);
+
+            return TypedResults.Ok(new { logoUrl });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status500InternalServerError,
+                title: "Error al subir logo",
+                detail: "No fue posible procesar la imagen. Inténtalo nuevamente.");
+        }
     }
 
     private static Task<int> SetSessionVariableAsync(
@@ -539,7 +619,8 @@ public static class PlatformEndpoints
         string Name,
         string Status,
         int ActiveMembers,
-        DateTimeOffset CreatedAt);
+        DateTimeOffset CreatedAt,
+        string? LogoUrl);
 
     public sealed record CreateTenantRequest(
         string Slug, 
@@ -645,7 +726,8 @@ public static class PlatformEndpoints
             tenant.CreatedAt,
             ownerUser.Email.Value,
             ownerUser.FullName,
-            phoneNumber ?? ""));
+            phoneNumber ?? "",
+            tenant.LogoUrl));
     }
 
     private static async Task<IResult> UpdateTenantAsync(
@@ -742,7 +824,8 @@ public static class PlatformEndpoints
             tenant.CreatedAt,
             request.OwnerEmail ?? "",
             request.OwnerFullName ?? "",
-            normalizedPhone ?? ""));
+            normalizedPhone ?? "",
+            tenant.LogoUrl));
     }
 
     private static async Task<IResult> ResetOwnerPasswordAsync(
@@ -860,7 +943,8 @@ public static class PlatformEndpoints
         DateTimeOffset CreatedAt,
         string OwnerEmail,
         string OwnerFullName,
-        string OwnerPhone);
+        string OwnerPhone,
+        string? LogoUrl);
 
     public sealed record UpdateTenantRequest(
         string Name,

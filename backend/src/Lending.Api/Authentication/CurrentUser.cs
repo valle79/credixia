@@ -22,6 +22,8 @@ public sealed class CurrentUser : ICurrentUser
 
     public string? TenantSlug { get; private set; }
 
+    public string? TenantLogoUrl { get; private set; }
+
     public IReadOnlySet<string> Permissions => _permissions;
 
     public bool HasPermission(string permissionCode) =>
@@ -35,6 +37,7 @@ public sealed class CurrentUser : ICurrentUser
         Guid? tenantId,
         string? tenantName,
         string? tenantSlug,
+        string? tenantLogoUrl,
         IEnumerable<string> permissions)
     {
         UserId = userId;
@@ -44,6 +47,7 @@ public sealed class CurrentUser : ICurrentUser
         TenantId = tenantId;
         TenantName = tenantName;
         TenantSlug = tenantSlug;
+        TenantLogoUrl = tenantLogoUrl;
         _permissions.Clear();
 
         foreach (var permission in permissions)

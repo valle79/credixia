@@ -8,5 +8,7 @@ public enum LoanStatus
     PaidOff = 4,      // Pagado completamente
     Rejected = 5,     // Rechazado
     Cancelled = 6,    // Cancelado
-    DefaultedDef = 7  // En mora/incobrable
+    DefaultedDef = 7, // En mora/incobrable
+    Refinanced = 8,   // Refinanciado (reemplazado por nuevo préstamo)
+    SettledEarly = 9  // Liquidado anticipadamente
 }

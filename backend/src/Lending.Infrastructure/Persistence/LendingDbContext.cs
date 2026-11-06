@@ -44,6 +44,10 @@ public sealed class LendingDbContext : DbContext
 
     public DbSet<Payment> Payments => Set<Payment>();
 
+    public DbSet<EarlySettlement> EarlySettlements => Set<EarlySettlement>();
+
+    public DbSet<LoanRefinancing> LoanRefinancings => Set<LoanRefinancing>();
+
     public DbSet<CashSession> CashSessions => Set<CashSession>();
 
     public DbSet<CollectionAction> CollectionActions => Set<CollectionAction>();

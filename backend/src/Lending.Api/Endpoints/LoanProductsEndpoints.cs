@@ -38,6 +38,10 @@ public static class LoanProductsEndpoints
             .WithName("UpdateLoanProductStatus")
             .RequirePermission(Permissions.SettingsManage);
 
+        group.MapDelete("/{id:guid}", DeleteLoanProductAsync)
+            .WithName("DeleteLoanProduct")
+            .RequirePermission(Permissions.SettingsManage);
+
         return endpoints;
     }
 
@@ -295,6 +299,53 @@ public static class LoanProductsEndpoints
                 request.Active ? "loan_product.activated" : "loan_product.deactivated",
                 "LoanProduct",
                 product.Id.ToString()),
+            cancellationToken);
+
+        return TypedResults.NoContent();
+    }
+
+    private static async Task<IResult> DeleteLoanProductAsync(
+        Guid id,
+        ICurrentUser currentUser,
+        LendingDbContext dbContext,
+        IAuditWriter auditWriter,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.TenantId.HasValue)
+        {
+            return TenantRequired();
+        }
+
+        var tenantId = currentUser.TenantId.Value;
+        var product = await dbContext.LoanProducts
+            .SingleOrDefaultAsync(p => p.Id == id && p.TenantId == tenantId, cancellationToken);
+
+        if (product is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var hasLoans = await dbContext.Loans
+            .AnyAsync(l => l.TenantId == tenantId && l.LoanProductId == id, cancellationToken);
+
+        if (hasLoans)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Producto con préstamos",
+                detail: "No se puede eliminar un producto que tiene préstamos asociados. Desactívalo en su lugar.");
+        }
+
+        dbContext.LoanProducts.Remove(product);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await auditWriter.RecordAsync(
+            new AuditEntry(
+                tenantId,
+                currentUser.UserId,
+                "loan_product.deleted",
+                "LoanProduct",
+                id.ToString()),
             cancellationToken);
 
         return TypedResults.NoContent();

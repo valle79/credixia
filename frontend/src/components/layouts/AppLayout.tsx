@@ -98,6 +98,7 @@ interface SidebarProps {
   contextLabel: string
   contextName: string
   isPlatformContext: boolean
+  logoUrl: string | null
   userFullName: string
   userEmail: string
   isPlatformAdmin: boolean
@@ -110,12 +111,15 @@ function Sidebar({
   contextLabel,
   contextName,
   isPlatformContext,
+  logoUrl,
   userFullName,
   userEmail,
   isPlatformAdmin,
   onNavigate,
   onLogout,
 }: SidebarProps) {
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null)
+
   return (
     <div className="flex h-full flex-col bg-white">
       <Link
@@ -123,35 +127,47 @@ function Sidebar({
         onClick={() => onNavigate(isPlatformContext ? '/admin' : '/')}
         className="flex h-16 shrink-0 items-center gap-3 border-b border-slate-200 px-5"
       >
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-300 to-brand-600 shadow-sm">
-          <span className="text-sm font-bold text-white">LP</span>
-        </div>
+        {logoUrl && failedLogoUrl !== logoUrl ? (
+          <img
+            src={logoUrl}
+            alt={contextName}
+            onError={() => setFailedLogoUrl(logoUrl)}
+            className="h-10 w-10 shrink-0 rounded-xl border border-slate-200 bg-white object-contain p-1"
+          />
+        ) : isPlatformContext ? (
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-300 to-brand-600 shadow-sm">
+            <span className="text-sm font-bold text-white">LP</span>
+          </div>
+        ) : (
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+            <Building2 className="h-5 w-5" />
+          </div>
+        )}
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900">Lending Portal</p>
-          <p className="truncate text-xs text-slate-500">
-            {isPlatformContext ? 'Panel de plataforma' : 'Gestión de créditos'}
+          <p className="truncate text-sm font-semibold text-slate-900">
+            {isPlatformContext ? 'Portal Credixia' : contextName}
           </p>
+          {isPlatformContext && (
+            <p className="truncate text-xs text-slate-500">Panel de plataforma</p>
+          )}
         </div>
       </Link>
 
-      <div className="mx-4 mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
-        <div className="flex items-center gap-2.5">
-          <span
-            className={cn(
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-              isPlatformContext ? 'bg-indigo-100 text-indigo-600' : 'bg-brand-100 text-brand-700'
-            )}
-          >
-            {isPlatformContext ? <ShieldCheck className="h-4 w-4" /> : <Building2 className="h-4 w-4" />}
-          </span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-              {contextLabel}
-            </p>
-            <p className="truncate text-sm font-semibold text-slate-800">{contextName}</p>
+      {isPlatformContext && (
+        <div className="mx-4 mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+              <ShieldCheck className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                {contextLabel}
+              </p>
+              <p className="truncate text-sm font-semibold text-slate-800">{contextName}</p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <nav className="flex-1 overflow-y-auto px-3 py-2">
         {groups.map((group) => (
@@ -309,8 +325,9 @@ export function AppLayout() {
     <Sidebar
       groups={groups}
       contextLabel="Espacio de trabajo"
-      contextName={isPlatformArea ? 'Plataforma' : tenant?.name || 'Sin organización'}
+      contextName={isPlatformArea ? 'Plataforma' : tenant?.name || 'Sin organizaci��n'}
       isPlatformContext={isPlatformArea}
+      logoUrl={isPlatformArea ? null : tenant?.logoUrl ?? null}
       userFullName={user.fullName}
       userEmail={user.email}
       isPlatformAdmin={isPlatformAdmin}
@@ -375,7 +392,7 @@ export function AppLayout() {
                   {activeItem.name}
                 </h2>
                 <p className="hidden truncate text-xs text-slate-500 sm:block">
-                  {isPlatformArea ? 'Panel de control' : tenant?.name || 'Lending Portal'}
+                  {isPlatformArea ? 'Panel de control' : tenant?.name || 'Portal Credixia'}
                 </p>
               </div>
             </div>

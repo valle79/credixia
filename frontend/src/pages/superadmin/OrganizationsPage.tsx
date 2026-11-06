@@ -27,6 +27,9 @@ export function OrganizationsPage() {
   const [pendingStatusChange, setPendingStatusChange] = useState<PendingStatusChange | null>(null)
   const [copiedField, setCopiedField] = useState<'email' | 'password' | null>(null)
   const [copyError, setCopyError] = useState('')
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [logoUploadError, setLogoUploadError] = useState('')
 
   useEffect(() => {
     if (searchParams.get('action') === 'create') {
@@ -56,11 +59,27 @@ export function OrganizationsPage() {
       ownerFullName: string
       ownerPhone: string
     }) => platformApi.createTenant(data),
-    onSuccess: (created) => {
-      setCreatedTenant(created)
+    onSuccess: async (created) => {
+      let logoUrl = created.logoUrl ?? null
+
+      if (logoFile) {
+        try {
+          const result = await platformApi.uploadTenantLogo(created.id, logoFile)
+          logoUrl = result.logoUrl
+        } catch (error) {
+          setLogoUploadError(getErrorMessage(error))
+        }
+      }
+
+      setCreatedTenant({ ...created, logoUrl })
       setPhoneForWhatsApp(created.ownerPhone)
       setGeneratedPassword(created.generatedPassword)
       setShowCreateModal(false)
+      setLogoFile(null)
+      setLogoPreview((current) => {
+        if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+        return null
+      })
       void queryClient.invalidateQueries({ queryKey: ['platform'] })
     },
   })
@@ -103,6 +122,38 @@ export function OrganizationsPage() {
       return sortBy === 'newest' ? dateDifference : -dateDifference
     })
   }, [tenants, search, statusFilter, sortBy])
+
+  const handleLogoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      setLogoUploadError('Selecciona una imagen JPG, PNG o WEBP.')
+      return
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setLogoUploadError('El logo no debe superar los 5 MB.')
+      return
+    }
+
+    setLogoUploadError('')
+    setLogoFile(file)
+    setLogoPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+      return URL.createObjectURL(file)
+    })
+  }
+
+  const resetLogo = () => {
+    setLogoFile(null)
+    setLogoPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+      return null
+    })
+    setLogoUploadError('')
+  }
 
   const handleCreateTenant = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -161,6 +212,7 @@ export function OrganizationsPage() {
         <Button
           onClick={() => {
             createTenantMutation.reset()
+            resetLogo()
             setShowCreateModal(true)
           }}
           className="inline-flex shrink-0 items-center justify-center gap-2 bg-slate-950 text-white shadow-sm transition hover:bg-slate-800"
@@ -256,7 +308,7 @@ export function OrganizationsPage() {
               icon="building"
               title="Todavía no hay organizaciones"
               description="Registra la primera empresa para comenzar a administrar las organizaciones de tu plataforma."
-              action={<Button onClick={() => setShowCreateModal(true)} className="bg-slate-950 text-white hover:bg-slate-800"><Icon name="plus" /> Crear organización</Button>}
+              action={<Button onClick={() => { resetLogo(); setShowCreateModal(true) }} className="bg-slate-950 text-white hover:bg-slate-800"><Icon name="plus" /> Crear organización</Button>}
             />
           ) : filteredTenants.length === 0 ? (
             <StatePanel
@@ -290,7 +342,7 @@ export function OrganizationsPage() {
       </section>
 
       {showCreateModal && (
-        <Modal title="Registrar organización" subtitle="Crea la empresa y configura su cuenta propietaria." onClose={() => setShowCreateModal(false)}>
+        <Modal title="Registrar organización" subtitle="Crea la empresa y configura su cuenta propietaria." onClose={() => { setShowCreateModal(false); resetLogo() }}>
           <form onSubmit={handleCreateTenant} className="space-y-5">
             <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-3.5">
               <div className="flex gap-3">
@@ -309,6 +361,37 @@ export function OrganizationsPage() {
               <Field label="Identificador (slug)" hint="Minúsculas, números y guiones.">
                 <input name="slug" placeholder="financiera-andina" required pattern="[a-z0-9-]+" maxLength={80} title="Solo letras minúsculas, números y guiones" className={fieldClass} />
               </Field>
+            </div>
+
+            <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white text-slate-400 ring-1 ring-inset ring-slate-200">
+                {logoPreview ? (
+                  <img src={logoPreview} alt="Vista previa del logo" className="h-full w-full object-contain" />
+                ) : (
+                  <Icon name="building" size="lg" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-slate-700">Logo de la organización</p>
+                <p className="mt-0.5 text-xs text-slate-500">Opcional. JPG, PNG o WEBP, máximo 5 MB.</p>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleLogoChange}
+                  disabled={createTenantMutation.isPending}
+                  className="mt-2 block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-950 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-slate-800 disabled:opacity-60"
+                />
+                {logoPreview && (
+                  <button
+                    type="button"
+                    onClick={resetLogo}
+                    className="mt-1 text-xs font-medium text-rose-600 hover:text-rose-700"
+                  >
+                    Quitar logo
+                  </button>
+                )}
+                {logoUploadError && <p className="mt-1 text-xs text-rose-600">{logoUploadError}</p>}
+              </div>
             </div>
 
             <div className="border-t border-slate-100 pt-4">
@@ -336,7 +419,7 @@ export function OrganizationsPage() {
               </div>
             )}
             <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
-              <Button type="button" variant="secondary" onClick={() => setShowCreateModal(false)} disabled={createTenantMutation.isPending}>Cancelar</Button>
+              <Button type="button" variant="secondary" onClick={() => { setShowCreateModal(false); resetLogo() }} disabled={createTenantMutation.isPending}>Cancelar</Button>
               <Button type="submit" disabled={createTenantMutation.isPending} className="min-w-[175px] bg-slate-950 text-white hover:bg-slate-800">
                 {createTenantMutation.isPending ? <><Spinner /> Creando organización…</> : <><Icon name="plus" /> Crear organización</>}
               </Button>
@@ -349,10 +432,17 @@ export function OrganizationsPage() {
         <Modal title="Organización creada" subtitle="La organización y la cuenta de propietario se registraron correctamente." onClose={closeCreatedModal}>
           <div className="space-y-4">
             <div className="flex gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Icon name="check" size="lg" /></div>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-emerald-100 text-emerald-700">
+                {createdTenant.logoUrl ? (
+                  <img src={createdTenant.logoUrl} alt={`Logo de ${createdTenant.name}`} className="h-full w-full object-contain" />
+                ) : (
+                  <Icon name="check" size="lg" />
+                )}
+              </div>
               <div className="min-w-0">
                 <p className="font-semibold text-emerald-950">{createdTenant.name}</p>
                 <p className="mt-0.5 text-sm text-emerald-800">La organización está lista para su configuración inicial.</p>
+                {logoUploadError && <p className="mt-1 text-xs text-rose-700">No se pudo subir el logo: {logoUploadError}</p>}
               </div>
             </div>
 
@@ -440,8 +530,12 @@ function OrganizationCard({
     <article className="group flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg hover:shadow-slate-200/60">
       <div className="p-4 sm:p-5">
         <div className="flex items-start gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-50 to-slate-100 text-base font-bold text-indigo-700 ring-1 ring-inset ring-indigo-100">
-            {getInitials(tenant.name)}
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-indigo-50 to-slate-100 text-base font-bold text-indigo-700 ring-1 ring-inset ring-indigo-100">
+            {tenant.logoUrl ? (
+              <img src={tenant.logoUrl} alt={`Logo de ${tenant.name}`} className="h-full w-full object-contain" />
+            ) : (
+              getInitials(tenant.name)
+            )}
           </div>
           <div className="min-w-0 flex-1 pt-0.5">
             <h3 className="truncate text-base font-semibold text-slate-950" title={tenant.name}>{tenant.name}</h3>

@@ -1,4 +1,4 @@
-# Lending Portal
+# Portal Credixia
 
 Plataforma SaaS multitenant para la gestión de préstamos, créditos y cobranza en Perú.
 El producto se entrega por fases; este repositorio contiene la **fase 1: base técnica**.

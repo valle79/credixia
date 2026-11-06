@@ -1,10 +1,14 @@
 import { apiClient } from './client'
 import type { LoanProductSummary, LoanProductDetails, CreateLoanProductRequest } from './types'
 
+export interface ListLoanProductsParams {
+  active?: boolean
+}
+
 export const loanProductsApi = {
-  list: async (active?: boolean): Promise<LoanProductSummary[]> => {
+  list: async (params?: ListLoanProductsParams): Promise<LoanProductSummary[]> => {
     const response = await apiClient.get<LoanProductSummary[]>('/api/v1/loan-products', {
-      params: { active },
+      params,
     })
     return response.data
   },
@@ -25,5 +29,9 @@ export const loanProductsApi = {
 
   updateStatus: async (id: string, active: boolean): Promise<void> => {
     await apiClient.patch(`/api/v1/loan-products/${id}/status`, { active })
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await apiClient.delete(`/api/v1/loan-products/${id}`)
   },
 }

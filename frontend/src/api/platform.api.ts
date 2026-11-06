@@ -37,6 +37,17 @@ export const platformApi = {
     const { data } = await apiClient.patch(`/api/v1/platform/tenants/${id}/status`, { suspend })
     return data
   },
+
+  uploadTenantLogo: async (id: string, file: File): Promise<{ logoUrl: string }> => {
+    const formData = new FormData()
+    formData.append('logo', file)
+    const { data } = await apiClient.post<{ logoUrl: string }>(
+      `/api/v1/platform/tenants/${id}/logo`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    return data
+  },
   
   sendCredentialsViaWhatsApp: async (
     id: string, 

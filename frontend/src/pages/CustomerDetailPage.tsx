@@ -148,10 +148,25 @@ export function CustomerDetailPage() {
           <Button variant="ghost" onClick={() => navigate('/customers')}>
             ← Volver
           </Button>
-          <h1 className="text-2xl font-semibold mt-2">{customer.fullName}</h1>
-          <p className="text-gray-600">
-            {customer.documentType} {customer.documentNumber}
-          </p>
+          <div className="mt-2 flex items-center gap-3">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-xl font-semibold text-slate-500">
+              {customer.photoUrl ? (
+                <img
+                  src={customer.photoUrl}
+                  alt={`Foto de ${customer.fullName}`}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                customer.fullName.charAt(0).toUpperCase()
+              )}
+            </div>
+            <div>
+              <h1 className="text-2xl font-semibold">{customer.fullName}</h1>
+              <p className="text-gray-600">
+                {customer.documentType} {customer.documentNumber}
+              </p>
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {getStatusBadge(customer.status)}

@@ -1,19 +1,22 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Copy, ExternalLink, MessageCircle } from 'lucide-react'
+import { Copy, ExternalLink, MessageCircle, Trash2 } from 'lucide-react'
 import { loansApi } from '../api/loans.api'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { Input } from '../components/ui/Input'
 import { Modal } from '../components/ui/Modal'
+import { CustomerAvatar } from '../components/ui/CustomerAvatar'
+import { EarlySettlementModal } from '../components/EarlySettlementModal'
+import { RefinancingModal } from '../components/RefinancingModal'
 import { formatCurrency, formatDate, getStatusVariant, getStatusLabel } from '../lib/format'
 import { getErrorMessage } from '../api/client'
 import { useToast } from '../hooks/useToast'
 import { useAuth } from '../hooks/useAuth'
 import { ToastContainer } from '../components/ui/ToastContainer'
-import type { LoanDetails, PaymentScheduleItem, RegisterPaymentRequest } from '../api/types'
+import type { LoanDetails, RegisterPaymentRequest } from '../api/types'
 
 function normalizeWhatsAppPhone(phone?: string): string | null {
   if (!phone) return null
@@ -27,34 +30,15 @@ function normalizeWhatsAppPhone(phone?: string): string | null {
   return digits
 }
 
-function buildScheduleMessage(
-  loan: LoanDetails,
-  schedule: PaymentScheduleItem[],
-  tenantName?: string,
-): string {
-  const ordered = [...schedule].sort((a, b) => a.paymentNumber - b.paymentNumber)
-  const scheduleLines = ordered.map((item) => {
-    const status = item.isPaid ? 'Pagado' : item.isOverdue ? 'Vencido' : 'Pendiente'
-    return `${item.paymentNumber}. ${formatDate(item.dueDate)} - ${formatCurrency(item.dueAmount, loan.currency)} - ${status}`
-  })
-
+function buildScheduleMessage(loan: LoanDetails, tenantName?: string): string {
   const lines = [
-    `Hola ${loan.customerName}, le compartimos el cronograma de pagos de su préstamo ${loan.loanNumber}.`,
+    `Hola ${loan.customerName}, le enviamos el cronograma de pagos de su préstamo ${loan.loanNumber}.`,
     '',
-    `Producto: ${loan.productName}`,
-    `Capital: ${formatCurrency(loan.principalAmount, loan.currency)}`,
-    `Total a pagar: ${formatCurrency(loan.totalAmount, loan.currency)}`,
-    `Cuotas: ${ordered.length}`,
-    '',
-    'Cronograma:',
-    ...scheduleLines,
-    '',
-    `Pagado: ${formatCurrency(loan.paidAmount, loan.currency)}`,
-    `Saldo: ${formatCurrency(loan.balanceAmount, loan.currency)}`,
+    'Adjuntamos el documento PDF con el detalle de sus cuotas.',
   ]
 
   if (tenantName) {
-    lines.push('', tenantName)
+    lines.push('', 'Saludos cordiales,', tenantName)
   }
 
   return lines.join('\n')
@@ -65,10 +49,15 @@ export function LoanDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const toast = useToast()
-  const { tenant } = useAuth()
+  const { tenant, hasPermission } = useAuth()
 
   const [showPaymentForm, setShowPaymentForm] = useState(false)
   const [showScheduleModal, setShowScheduleModal] = useState(false)
+  const [showSettlementModal, setShowSettlementModal] = useState(false)
+  const [showRefinancingModal, setShowRefinancingModal] = useState(false)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [isSharingPdf, setIsSharingPdf] = useState(false)
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false)
   const [paymentData, setPaymentData] = useState({
     receiptNumber: '',
     amount: '',
@@ -123,6 +112,19 @@ export function LoanDetailPage() {
     },
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: () => loansApi.delete(id!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loans'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      toast.success('Préstamo eliminado', 'El préstamo se eliminó correctamente.')
+      navigate('/loans')
+    },
+    onError: (error) => {
+      toast.error('No se pudo eliminar el préstamo', getErrorMessage(error))
+    },
+  })
+
   const handleRegisterPayment = (e: React.FormEvent) => {
     e.preventDefault()
     registerPaymentMutation.mutate({
@@ -143,10 +145,13 @@ export function LoanDetailPage() {
   const isPending = loan.status === 'Pending'
   const isApproved = loan.status === 'Approved'
   const isActive = loan.status === 'Active'
+  const canDeleteLoan =
+    hasPermission('loans.manage') &&
+    ['Pending', 'Approved', 'Rejected', 'Cancelled'].includes(loan.status)
 
   const orderedSchedule = schedule ? [...schedule].sort((a, b) => a.paymentNumber - b.paymentNumber) : []
   const whatsAppPhone = normalizeWhatsAppPhone(loan.customerPhone)
-  const scheduleMessage = buildScheduleMessage(loan, orderedSchedule, tenant?.name)
+  const scheduleMessage = buildScheduleMessage(loan, tenant?.name)
   const whatsAppUrl = whatsAppPhone
     ? `https://wa.me/${whatsAppPhone}?text=${encodeURIComponent(scheduleMessage)}`
     : null
@@ -161,19 +166,102 @@ export function LoanDetailPage() {
     }
   }
 
-  const handleOpenWhatsApp = () => {
+  const downloadSchedulePdf = async () => {
+    const blob = await loansApi.getSchedulePdf(id!)
+    const fileName = `Cronograma_${loan.loanNumber}.pdf`
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleDownloadPdf = async () => {
+    setIsDownloadingPdf(true)
+    try {
+      await downloadSchedulePdf()
+      toast.success('PDF descargado', 'Puedes adjuntarlo manualmente en WhatsApp.')
+    } catch (error) {
+      toast.error('No se pudo generar el PDF', getErrorMessage(error))
+    } finally {
+      setIsDownloadingPdf(false)
+    }
+  }
+
+  const handleSendPdfByWhatsApp = async () => {
     if (!whatsAppUrl) return
-    window.open(whatsAppUrl, '_blank', 'noopener,noreferrer')
-    setShowScheduleModal(false)
+
+    const canShareFiles =
+      typeof navigator !== 'undefined' &&
+      typeof navigator.share === 'function' &&
+      typeof navigator.canShare === 'function'
+
+    if (!canShareFiles) {
+      window.open(whatsAppUrl, '_blank', 'noopener,noreferrer')
+      setShowScheduleModal(false)
+      setIsSharingPdf(true)
+      try {
+        await downloadSchedulePdf()
+        toast.success('PDF descargado', 'Adjunta el PDF descargado en WhatsApp para enviarlo.')
+      } catch (error) {
+        toast.error('No se pudo generar el PDF', getErrorMessage(error))
+      } finally {
+        setIsSharingPdf(false)
+      }
+      return
+    }
+
+    setIsSharingPdf(true)
+    try {
+      const blob = await loansApi.getSchedulePdf(id!)
+      const fileName = `Cronograma_${loan.loanNumber}.pdf`
+      const file = new File([blob], fileName, { type: 'application/pdf' })
+      const shareData: ShareData = {
+        files: [file],
+        title: `Cronograma de pagos ${loan.loanNumber}`,
+        text: scheduleMessage,
+      }
+
+      if (navigator.canShare(shareData)) {
+        await navigator.share(shareData)
+        setShowScheduleModal(false)
+      } else {
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = fileName
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        URL.revokeObjectURL(url)
+        window.open(whatsAppUrl, '_blank', 'noopener,noreferrer')
+        setShowScheduleModal(false)
+        toast.success('PDF descargado', 'Adjunta el PDF descargado en WhatsApp para enviarlo.')
+      }
+    } catch (error) {
+      if ((error as Error)?.name !== 'AbortError') {
+        toast.error('No se pudo compartir el PDF', getErrorMessage(error))
+      }
+    } finally {
+      setIsSharingPdf(false)
+    }
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" onClick={() => navigate('/loans')}>
             ← Volver
           </Button>
+          <CustomerAvatar
+            name={loan.customerName}
+            photoUrl={loan.customerPhotoUrl}
+            size="lg"
+          />
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Préstamo {loan.loanNumber}</h1>
             <p className="mt-1 text-sm text-slate-600">
@@ -253,7 +341,7 @@ export function LoanDetailPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {[...schedule].sort((a, b) => a.paymentNumber - b.paymentNumber).map((item) => (
-                      <tr key={item.id} className={item.isOverdue ? 'bg-red-50' : item.isPaid ? 'bg-emerald-50' : ''}>
+                      <tr key={item.id} className={item.isCancelled ? 'bg-slate-50 text-slate-400' : item.isOverdue ? 'bg-red-50' : item.isPaid ? 'bg-emerald-50' : ''}>
                         <td className="px-3 py-2 text-sm font-medium text-slate-900">{item.paymentNumber}</td>
                         <td className="px-3 py-2 text-sm text-slate-700">{formatDate(item.dueDate)}</td>
                         <td className="px-3 py-2 text-right text-sm text-slate-900">
@@ -272,7 +360,9 @@ export function LoanDetailPage() {
                           {formatCurrency(item.paidAmount, loan.currency)}
                         </td>
                         <td className="px-3 py-2 text-center">
-                          {item.isPaid ? (
+                          {item.isCancelled ? (
+                            <Badge variant="default" className="text-xs">Cancelada</Badge>
+                          ) : item.isPaid ? (
                             <Badge variant="success" className="text-xs">Pagado</Badge>
                           ) : item.isOverdue ? (
                             <Badge variant="error" className="text-xs">Vencido</Badge>
@@ -395,7 +485,42 @@ export function LoanDetailPage() {
                       </div>
                     </form>
                   )}
+
+                  <div className="border-t border-slate-200 pt-4 mt-4">
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
+                      Opciones Avanzadas
+                    </p>
+                    <div className="space-y-2">
+                      <Button
+                        className="w-full"
+                        variant="secondary"
+                        onClick={() => setShowSettlementModal(true)}
+                      >
+                        Liquidar Anticipadamente
+                      </Button>
+                      <Button
+                        className="w-full"
+                        variant="secondary"
+                        onClick={() => setShowRefinancingModal(true)}
+                      >
+                        Refinanciar Préstamo
+                      </Button>
+                    </div>
+                  </div>
                 </>
+              )}
+
+              {canDeleteLoan && (
+                <div className="border-t border-slate-200 pt-4 mt-4">
+                  <Button
+                    variant="danger"
+                    className="w-full"
+                    onClick={() => setShowDeleteModal(true)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Eliminar préstamo
+                  </Button>
+                </div>
               )}
             </div>
           </Card>
@@ -418,7 +543,7 @@ export function LoanDetailPage() {
 
           <div>
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-              Vista previa del mensaje
+              Mensaje que se enviará
             </p>
             <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-50 p-4 font-sans text-sm leading-6 text-slate-700">
               {scheduleMessage}
@@ -426,17 +551,100 @@ export function LoanDetailPage() {
           </div>
 
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button variant="secondary" onClick={handleCopySchedule}>
+            <Button
+              variant="secondary"
+              onClick={handleCopySchedule}
+              disabled={isSharingPdf || isDownloadingPdf}
+            >
               <Copy className="h-4 w-4" />
               Copiar mensaje
             </Button>
-            <Button onClick={handleOpenWhatsApp}>
+            <Button
+              variant="secondary"
+              onClick={handleDownloadPdf}
+              isLoading={isDownloadingPdf}
+              disabled={isSharingPdf}
+            >
               <ExternalLink className="h-4 w-4" />
-              Abrir WhatsApp
+              Descargar PDF
+            </Button>
+            <Button
+              onClick={handleSendPdfByWhatsApp}
+              isLoading={isSharingPdf}
+              disabled={isDownloadingPdf}
+            >
+              <MessageCircle className="h-4 w-4" />
+              Enviar PDF por WhatsApp
             </Button>
           </div>
         </div>
       </Modal>
+
+      <Modal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        title="Eliminar préstamo"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <CustomerAvatar
+              name={loan.customerName}
+              photoUrl={loan.customerPhotoUrl}
+              size="lg"
+            />
+            <div className="min-w-0">
+              <p className="truncate font-semibold text-slate-900">{loan.customerName}</p>
+              <p className="font-mono text-xs text-slate-500">{loan.loanNumber}</p>
+              <p className="mt-0.5 text-xs text-slate-600">
+                {formatCurrency(loan.principalAmount, loan.currency)} ·{' '}
+                {getStatusLabel(loan.status)}
+              </p>
+            </div>
+          </div>
+
+          <p className="text-sm text-slate-600">
+            ¿Estás seguro de que deseas eliminar este préstamo? Esta acción no se puede
+            deshacer.
+          </p>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs text-amber-800">
+              Solo se pueden eliminar préstamos pendientes, aprobados sin desembolso,
+              rechazados o cancelados. Los préstamos desembolsados conservan su historial
+              financiero.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <Button variant="ghost" onClick={() => setShowDeleteModal(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              isLoading={deleteMutation.isPending}
+              onClick={() => deleteMutation.mutate()}
+            >
+              <Trash2 className="h-4 w-4" />
+              Eliminar préstamo
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <EarlySettlementModal
+        isOpen={showSettlementModal}
+        onClose={() => setShowSettlementModal(false)}
+        loan={loan}
+        tenantId={tenant?.id}
+      />
+
+      <RefinancingModal
+        isOpen={showRefinancingModal}
+        onClose={() => setShowRefinancingModal(false)}
+        loan={loan}
+        tenantId={tenant?.id}
+      />
 
       <ToastContainer toasts={toast.toasts} onClose={toast.close} />
     </div>

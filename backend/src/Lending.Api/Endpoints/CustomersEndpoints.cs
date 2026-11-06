@@ -39,6 +39,10 @@ public static class CustomersEndpoints
             .WithName("UpdateCustomerStatus")
             .RequirePermission(Permissions.CustomersManage);
 
+        group.MapDelete("/{id:guid}", DeleteCustomerAsync)
+            .WithName("DeleteCustomer")
+            .RequirePermission(Permissions.CustomersManage);
+
         group.MapPost("/{id:guid}/references", AddReferenceAsync)
             .WithName("AddCustomerReference")
             .RequirePermission(Permissions.CustomersManage);
@@ -117,6 +121,7 @@ public static class CustomersEndpoints
                 c.DocumentNumber,
                 c.FullName,
                 c.Phone,
+                c.PhotoUrl,
                 c.Status,
                 c.CreatedAt,
             })
@@ -130,6 +135,7 @@ public static class CustomersEndpoints
                 c.DocumentNumber,
                 c.FullName,
                 c.Phone,
+                c.PhotoUrl,
                 c.Status.ToString(),
                 c.CreatedAt))
             .ToArray();
@@ -171,6 +177,7 @@ public static class CustomersEndpoints
             customer.BirthDate,
             customer.Phone,
             customer.Email,
+            customer.PhotoUrl,
             customer.Address,
             customer.District,
             customer.Province,
@@ -366,6 +373,54 @@ public static class CustomersEndpoints
         return TypedResults.NoContent();
     }
 
+    private static async Task<IResult> DeleteCustomerAsync(
+        Guid id,
+        ICurrentUser currentUser,
+        LendingDbContext dbContext,
+        IAuditWriter auditWriter,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.TenantId.HasValue)
+        {
+            return TenantRequired();
+        }
+
+        var tenantId = currentUser.TenantId.Value;
+        var customer = await dbContext.Customers
+            .Include(c => c.References)
+            .SingleOrDefaultAsync(c => c.Id == id && c.TenantId == tenantId, cancellationToken);
+
+        if (customer is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var hasLoans = await dbContext.Loans
+            .AnyAsync(l => l.TenantId == tenantId && l.CustomerId == id, cancellationToken);
+
+        if (hasLoans)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Cliente con préstamos",
+                detail: "No se puede eliminar un cliente que tiene préstamos asociados. Suspéndelo o bloquéalo en su lugar.");
+        }
+
+        dbContext.Customers.Remove(customer);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await auditWriter.RecordAsync(
+            new AuditEntry(
+                tenantId,
+                currentUser.UserId,
+                "customer.deleted",
+                "Customer",
+                id.ToString()),
+            cancellationToken);
+
+        return TypedResults.NoContent();
+    }
+
     private static async Task<IResult> AddReferenceAsync(
         Guid id,
         AddCustomerReferenceRequest request,
@@ -446,6 +501,7 @@ public static class CustomersEndpoints
         string DocumentNumber,
         string FullName,
         string? Phone,
+        string? PhotoUrl,
         string Status,
         DateTimeOffset CreatedAt);
 
@@ -458,6 +514,7 @@ public static class CustomersEndpoints
         DateOnly? BirthDate,
         string? Phone,
         string? Email,
+        string? PhotoUrl,
         string? Address,
         string? District,
         string? Province,

@@ -135,6 +135,8 @@ internal sealed class LoanConfiguration : IEntityTypeConfiguration<Loan>
             sb.Property(s => s.PaymentNumber).IsRequired();
             sb.Property(s => s.DueDate).IsRequired();
             sb.Property(s => s.PaidDate);
+            sb.Property(s => s.IsCancelled).IsRequired();
+            sb.Property(s => s.CancelledDate);
 
             sb.OwnsOne(s => s.DueAmount, mb =>
             {

@@ -54,9 +54,13 @@ public sealed class PaymentScheduleItem : Entity
 
     public DateOnly? PaidDate { get; private set; }
 
+    public bool IsCancelled { get; private set; }
+
+    public DateOnly? CancelledDate { get; private set; }
+
     public bool IsPaid => PaidAmount.Amount >= DueAmount.Amount;
 
-    public bool IsOverdue(DateOnly currentDate) => !IsPaid && currentDate > DueDate;
+    public bool IsOverdue(DateOnly currentDate) => !IsPaid && !IsCancelled && currentDate > DueDate;
 
     internal void AddPayment(Money amount, DateOnly paymentDate)
     {
@@ -67,5 +71,11 @@ public sealed class PaymentScheduleItem : Entity
     internal void AddLateFee(Money fee)
     {
         LateFee = LateFee.Add(fee);
+    }
+
+    internal void Cancel(DateOnly cancelledDate)
+    {
+        IsCancelled = true;
+        CancelledDate = cancelledDate;
     }
 }

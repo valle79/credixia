@@ -623,7 +623,8 @@ public static class AuthEndpoints
             tenant = new TenantSummary(
                 currentUser.TenantId.Value,
                 currentUser.TenantSlug,
-                currentUser.TenantName);
+                currentUser.TenantName,
+                currentUser.TenantLogoUrl);
         }
 
         return TypedResults.Ok(new MeResponse(
@@ -1076,7 +1077,7 @@ public static class AuthEndpoints
             issued.AccessToken,
             issued.AccessTokenExpiresAt,
             new SessionUserResponse(user.Id, user.Email.Value, user.FullName, user.IsPlatformAdmin),
-            tenant is null ? null : new TenantSummary(tenant.Id, tenant.Slug.Value, tenant.Name),
+            tenant is null ? null : new TenantSummary(tenant.Id, tenant.Slug.Value, tenant.Name, tenant.LogoUrl),
             permissions);
 
     private static async Task<IDbContextTransaction?> BeginTransactionIfNeededAsync(
@@ -1165,7 +1166,7 @@ public static class AuthEndpoints
 
     public sealed record SessionUserResponse(Guid Id, string Email, string FullName, bool IsPlatformAdmin);
 
-    public sealed record TenantSummary(Guid Id, string Slug, string Name);
+    public sealed record TenantSummary(Guid Id, string Slug, string Name, string? LogoUrl);
 
     public sealed record MeResponse(
         SessionUserResponse User,

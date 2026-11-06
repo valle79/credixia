@@ -41,6 +41,7 @@ export interface TenantSummary {
   id: string
   slug: string
   name: string
+  logoUrl?: string | null
 }
 
 export interface MeResponse {
@@ -57,6 +58,7 @@ export interface CustomerSummary {
   documentNumber: string
   fullName: string
   phone?: string
+  photoUrl?: string
   status: string
   createdAt: string
 }
@@ -132,7 +134,7 @@ export interface CreateLoanProductRequest {
   name: string
   frequency: 'Daily' | 'Weekly' | 'Biweekly' | 'Monthly' | 'Quarterly'
   interestRate: number
-  interestType: 'Simple' | 'Compound'
+  interestType: 'Simple' | 'Compound' | 'French'
   minimumAmount: number
   maximumAmount: number
   minimumTermDays: number
@@ -150,6 +152,7 @@ export interface LoanSummary {
   loanNumber: string
   customerId: string
   customerName: string
+  customerPhotoUrl?: string
   principalAmount: number
   totalAmount: number
   balanceAmount: number
@@ -173,6 +176,7 @@ export interface LoanDetails {
   loanNumber: string
   customerId: string
   customerName: string
+  customerPhotoUrl?: string
   customerPhone?: string
   loanProductId: string
   productName: string
@@ -217,6 +221,82 @@ export interface RegisterPaymentRequest {
   paymentDate: string
 }
 
+// Early Settlement
+export interface CalculateSettlementResponse {
+  loanId: string
+  loanNumber: string
+  calculationDate: string
+  outstandingPrincipal: number
+  accruedInterest: number
+  totalSettlementAmount: number
+  currency: string
+  savings: number
+}
+
+export interface SettleLoanRequest {
+  amount: number
+  settlementDate: string
+  notes?: string | undefined
+}
+
+export interface SettleLoanResponse {
+  id: string
+  loanNumber: string
+  status: string
+  settlementDate: string
+  amountPaid: number
+  outstandingPrincipal: number
+  accruedInterest: number
+}
+
+// Refinancing
+export interface SimulateRefinancingRequest {
+  refinancingDate?: string | undefined
+  additionalAmount?: number | undefined
+  newInterestRate?: number | undefined
+  newTermMonths?: number | undefined
+}
+
+export interface SimulateRefinancingResponse {
+  originalLoanId: string
+  originalLoanNumber: string
+  refinancingDate: string
+  outstandingPrincipal: number
+  accruedInterest: number
+  totalDebt: number
+  additionalAmount: number
+  newPrincipal: number
+  newInterestRate: number
+  newTermMonths: number
+  newPaymentAmount: number
+  newTotalAmount: number
+  currency: string
+}
+
+export interface RefinanceLoanRequest {
+  newLoanProductId: string
+  newInterestRate: number
+  newTermDays: number
+  newNumberOfPayments: number
+  refinancingDate: string
+  firstPaymentDate: string
+  additionalAmount?: number | undefined
+  notes?: string | undefined
+}
+
+export interface RefinanceLoanResponse {
+  originalLoanId: string
+  originalLoanNumber: string
+  newLoanId: string
+  newLoanNumber: string
+  refinancingDate: string
+  outstandingPrincipal: number
+  accruedInterest: number
+  totalDebt: number
+  newPrincipal: number
+  newInterestRate: number
+}
+
 export interface PaymentScheduleItem {
   id: string
   paymentNumber: number
@@ -227,6 +307,8 @@ export interface PaymentScheduleItem {
   paidDate?: string
   isPaid: boolean
   isOverdue: boolean
+  isCancelled: boolean
+  cancelledDate?: string
   principalAmount?: number
   interestAmount?: number
   remainingBalance?: number
@@ -280,6 +362,7 @@ export interface PlatformTenantSummary {
   status: string
   activeMembers: number
   createdAt: string
+  logoUrl?: string | null
 }
 
 export interface CreateTenantResponse {
@@ -292,6 +375,7 @@ export interface CreateTenantResponse {
   ownerEmail: string
   generatedPassword: string
   ownerPhone: string
+  logoUrl?: string | null
 }
 
 export interface TenantDetails {
@@ -304,6 +388,7 @@ export interface TenantDetails {
   ownerEmail: string
   ownerFullName: string
   ownerPhone: string
+  logoUrl?: string | null
 }
 
 export interface UpdateTenantRequest {

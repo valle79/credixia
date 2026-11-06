@@ -181,7 +181,7 @@ export function LoginPage() {
 
             <footer className="mt-7 space-y-1 text-center">
               <p className="text-xs text-slate-500">
-                © {new Date().getFullYear()} Lending Portal. Todos los derechos reservados.
+                © {new Date().getFullYear()} Credixia. Todos los derechos reservados.
               </p>
               <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">
                 Plataforma de gestión de préstamos

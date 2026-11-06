@@ -35,6 +35,10 @@ export const customersApi = {
     await apiClient.put(`/api/v1/customers/${id}`, data)
   },
 
+  delete: async (id: string): Promise<void> => {
+    await apiClient.delete(`/api/v1/customers/${id}`)
+  },
+
   updateStatus: async (id: string, status: 'Active' | 'Suspended' | 'Blocked'): Promise<void> => {
     await apiClient.patch(`/api/v1/customers/${id}/status`, { status })
   },
@@ -45,5 +49,16 @@ export const customersApi = {
 
   removeReference: async (id: string, referenceId: string): Promise<void> => {
     await apiClient.delete(`/api/v1/customers/${id}/references/${referenceId}`)
+  },
+
+  uploadPhoto: async (id: string, file: File): Promise<{ photoUrl: string }> => {
+    const formData = new FormData()
+    formData.append('photo', file)
+    const response = await apiClient.post<{ photoUrl: string }>(
+      `/api/v1/customers/${id}/photo`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    return response.data
   },
 }

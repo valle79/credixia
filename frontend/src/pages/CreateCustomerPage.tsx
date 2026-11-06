@@ -33,11 +33,35 @@ export function CreateCustomerPage() {
     monthlyIncome: '',
   })
 
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
+  const [photoError, setPhotoError] = useState('')
+
   const createMutation = useMutation({
     mutationFn: (data: CreateCustomerRequest) => customersApi.create(data),
-    onSuccess: () => {
+    onSuccess: async (created) => {
+      let photoFailed = false
+
+      if (photoFile) {
+        try {
+          await customersApi.uploadPhoto(created.id, photoFile)
+          // Invalidar TODAS las queries de customers para asegurar que se refresquen
+          queryClient.invalidateQueries({ queryKey: ['customers'] })
+          queryClient.invalidateQueries({ queryKey: ['customer'] })
+        } catch (error) {
+          photoFailed = true
+          toast.error('No se pudo subir la foto', getErrorMessage(error))
+        }
+      }
+
       queryClient.invalidateQueries({ queryKey: ['customers'] })
-      toast.success('Cliente creado', 'El cliente ha sido registrado exitosamente')
+
+      if (!photoFailed) {
+        toast.success('Cliente creado', 'El cliente ha sido registrado exitosamente')
+      } else {
+        toast.success('Cliente creado', 'El cliente se registró, pero la foto no se pudo subir.')
+      }
+
       navigate('/customers')
     },
     onError: (error) => {
@@ -60,6 +84,38 @@ export function CreateCustomerPage() {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      setPhotoError('Selecciona una imagen JPG, PNG o WEBP.')
+      return
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setPhotoError('La foto no debe superar los 5 MB.')
+      return
+    }
+
+    setPhotoError('')
+    setPhotoFile(file)
+    setPhotoPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+      return URL.createObjectURL(file)
+    })
+  }
+
+  const resetPhoto = () => {
+    setPhotoFile(null)
+    setPhotoPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+      return null
+    })
+    setPhotoError('')
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -76,6 +132,41 @@ export function CreateCustomerPage() {
         <div className="space-y-6">
           <Card title="Información Personal">
             <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex items-center gap-4 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-lg font-semibold text-slate-500">
+                  {photoPreview ? (
+                    <img
+                      src={photoPreview}
+                      alt="Vista previa de la foto del cliente"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    (formData.fullName.trim().charAt(0) || '?').toUpperCase()
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-700">Foto del cliente</p>
+                  <p className="text-xs text-slate-500">Opcional. JPG, PNG o WEBP, máximo 5 MB.</p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoChange}
+                    disabled={createMutation.isPending}
+                    className="mt-2 block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-brand-600 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-brand-700 disabled:opacity-60"
+                  />
+                  {photoPreview && (
+                    <button
+                      type="button"
+                      onClick={resetPhoto}
+                      className="mt-1 text-xs font-medium text-rose-600 hover:text-rose-700"
+                    >
+                      Quitar foto
+                    </button>
+                  )}
+                  {photoError && <p className="mt-1 text-xs text-rose-600">{photoError}</p>}
+                </div>
+              </div>
+
               <Select
                 label="Tipo de Cliente"
                 name="type"

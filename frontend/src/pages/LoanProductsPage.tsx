@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { loanProductsApi } from '../api/loanProducts.api';
+import type { LoanProductSummary } from '../api/types';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Card } from '../components/ui/Card';
+import { Modal } from '../components/ui/Modal';
 import { formatCurrency, formatPercent } from '../lib/format';
 import { useToast } from '../hooks/useToast';
 import { useAuth } from '../hooks/useAuth';
@@ -18,6 +20,7 @@ export function LoanProductsPage() {
   const toast = useToast();
   const { tenant } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const [productToDelete, setProductToDelete] = useState<LoanProductSummary | null>(null);
 
   const { data: products, isLoading } = useQuery({
     queryKey: ['loanProducts', tenant?.id],
@@ -40,6 +43,18 @@ export function LoanProductsPage() {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => loanProductsApi.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loanProducts'] });
+      toast.success('Producto eliminado', 'El producto se eliminó correctamente');
+      setProductToDelete(null);
+    },
+    onError: (error) => {
+      toast.error('No se pudo eliminar', getErrorMessage(error));
+    },
+  });
+
   const getFrequencyLabel = (frequency: string) => {
     const labels: Record<string, string> = {
       Daily: 'Diario',
@@ -57,6 +72,7 @@ export function LoanProductsPage() {
     const labels: Record<string, string> = {
       Simple: 'Simple',
       Compound: 'Compuesto',
+      French: 'Francés',
     };
     return labels[type] || type;
   };
@@ -169,6 +185,14 @@ export function LoanProductsPage() {
                 >
                   {product.isActive ? 'Desactivar' : 'Activar'}
                 </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                  onClick={() => setProductToDelete(product)}
+                >
+                  Eliminar
+                </Button>
               </div>
             </Card>
           ))}
@@ -187,6 +211,39 @@ export function LoanProductsPage() {
           </div>
         </Card>
       )}
+      <Modal
+        isOpen={!!productToDelete}
+        onClose={() => setProductToDelete(null)}
+        title="Eliminar producto"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            ¿Estás seguro de que deseas eliminar{' '}
+            <span className="font-semibold text-gray-900">{productToDelete?.name}</span>?
+            Esta acción no se puede deshacer.
+          </p>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs text-amber-800">
+              Solo se pueden eliminar productos sin préstamos asociados. Si el producto ya se
+              usó, desactívalo en su lugar.
+            </p>
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button variant="ghost" onClick={() => setProductToDelete(null)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              isLoading={deleteMutation.isPending}
+              onClick={() => productToDelete && deleteMutation.mutate(productToDelete.id)}
+            >
+              Eliminar producto
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       <ToastContainer toasts={toast.toasts} onClose={toast.close} />
     </div>
   );

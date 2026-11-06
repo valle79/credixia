@@ -95,6 +95,7 @@ public sealed class SessionContextMiddleware
         Guid? tenantId = null;
         string? tenantName = null;
         string? tenantSlug = null;
+        string? tenantLogoUrl = null;
         var permissions = Array.Empty<string>();
 
         if (requestedTenantId is { } tenantToLoad)
@@ -130,6 +131,7 @@ public sealed class SessionContextMiddleware
             tenantId = tenantToLoad;
             tenantName = tenant.Name;
             tenantSlug = tenant.Slug.Value;
+            tenantLogoUrl = tenant.LogoUrl;
             tenantContext.Set(tenantToLoad);
 
             permissions = SessionQueries.ResolvePermissions(membership).ToArray();
@@ -151,6 +153,7 @@ public sealed class SessionContextMiddleware
             tenantId,
             tenantName,
             tenantSlug,
+            tenantLogoUrl,
             permissions);
 
         await _next(context);

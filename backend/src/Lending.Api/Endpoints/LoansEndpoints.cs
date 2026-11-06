@@ -30,6 +30,10 @@ public static class LoansEndpoints
             .WithName("GetLoan")
             .RequirePermission(Permissions.LoansView);
 
+        group.MapDelete("/{id:guid}", DeleteLoanAsync)
+            .WithName("DeleteLoan")
+            .RequirePermission(Permissions.LoansManage);
+
         group.MapPost("/", CreateLoanAsync)
             .WithName("CreateLoan")
             .RequirePermission(Permissions.LoansManage);
@@ -57,6 +61,22 @@ public static class LoansEndpoints
         group.MapGet("/{id:guid}/schedule/pdf", DownloadLoanSchedulePdfAsync)
             .WithName("DownloadLoanSchedulePdf")
             .RequirePermission(Permissions.LoansView);
+
+        group.MapPost("/{id:guid}/settlement/calculate", CalculateSettlementAsync)
+            .WithName("CalculateSettlement")
+            .RequirePermission(Permissions.LoansView);
+
+        group.MapPost("/{id:guid}/settlement", SettleLoanAsync)
+            .WithName("SettleLoan")
+            .RequirePermission(Permissions.LoansManage);
+
+        group.MapPost("/{id:guid}/refinance/simulate", SimulateRefinancingAsync)
+            .WithName("SimulateRefinancing")
+            .RequirePermission(Permissions.LoansView);
+
+        group.MapPost("/{id:guid}/refinance", RefinanceLoanAsync)
+            .WithName("RefinanceLoan")
+            .RequirePermission(Permissions.LoansManage);
 
         return endpoints;
     }
@@ -149,6 +169,10 @@ public static class LoansEndpoints
                     .Where(c => c.Id == l.CustomerId)
                     .Select(c => c.FullName)
                     .FirstOrDefault() ?? "Desconocido",
+                CustomerPhotoUrl = dbContext.Customers
+                    .Where(c => c.Id == l.CustomerId)
+                    .Select(c => c.PhotoUrl)
+                    .FirstOrDefault(),
                 l.PrincipalAmount,
                 l.TotalAmount,
                 l.BalanceAmount,
@@ -165,6 +189,7 @@ public static class LoansEndpoints
                 l.LoanNumber,
                 l.CustomerId,
                 l.CustomerName,
+                l.CustomerPhotoUrl,
                 l.PrincipalAmount.Amount,
                 l.TotalAmount.Amount,
                 l.BalanceAmount.Amount,
@@ -249,6 +274,10 @@ public static class LoansEndpoints
                     .Where(c => c.Id == l.CustomerId)
                     .Select(c => c.FullName)
                     .FirstOrDefault() ?? "Desconocido",
+                CustomerPhotoUrl = dbContext.Customers
+                    .Where(c => c.Id == l.CustomerId)
+                    .Select(c => c.PhotoUrl)
+                    .FirstOrDefault(),
                 CustomerPhone = dbContext.Customers
                     .Where(c => c.Id == l.CustomerId)
                     .Select(c => c.Phone)
@@ -291,6 +320,7 @@ public static class LoansEndpoints
             loan.LoanNumber,
             loan.CustomerId,
             loan.CustomerName,
+            loan.CustomerPhotoUrl,
             loan.CustomerPhone,
             loan.LoanProductId,
             loan.ProductName,
@@ -315,6 +345,60 @@ public static class LoansEndpoints
             loan.Notes,
             loan.CreatedAt,
             loan.UpdatedAt));
+    }
+
+    private static async Task<IResult> DeleteLoanAsync(
+        Guid id,
+        ICurrentUser currentUser,
+        LendingDbContext dbContext,
+        IAuditWriter auditWriter,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.TenantId.HasValue)
+        {
+            return TenantRequired();
+        }
+
+        var tenantId = currentUser.TenantId.Value;
+        var loan = await dbContext.Loans
+            .Include(l => l.Schedule)
+            .Include(l => l.Payments)
+            .SingleOrDefaultAsync(l => l.Id == id && l.TenantId == tenantId, cancellationToken);
+
+        if (loan is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        if (loan.Status is not (LoanStatus.Pending or LoanStatus.Approved or LoanStatus.Rejected or LoanStatus.Cancelled))
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Préstamo con movimientos financieros",
+                detail: "Solo se pueden eliminar préstamos pendientes, aprobados sin desembolso, rechazados o cancelados. Los préstamos desembolsados conservan historial financiero.");
+        }
+
+        if (loan.Payments.Count > 0)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Préstamo con pagos registrados",
+                detail: "No se puede eliminar un préstamo que tiene pagos registrados.");
+        }
+
+        dbContext.Loans.Remove(loan);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await auditWriter.RecordAsync(
+            new AuditEntry(
+                tenantId,
+                currentUser.UserId,
+                "loan.deleted",
+                "Loan",
+                id.ToString()),
+            cancellationToken);
+
+        return TypedResults.NoContent();
     }
 
     private static async Task<IResult> CreateLoanAsync(
@@ -656,6 +740,8 @@ public static class LoansEndpoints
                 item.PaidAmount,
                 item.LateFee,
                 item.PaidDate,
+                item.IsCancelled,
+                item.CancelledDate,
                 item.PrincipalAmount,
                 item.InterestAmount,
                 item.RemainingBalance,
@@ -672,7 +758,9 @@ public static class LoansEndpoints
                 item.LateFee.Amount,
                 item.PaidDate,
                 item.PaidAmount.Amount >= item.DueAmount.Amount,
-                item.PaidAmount.Amount < item.DueAmount.Amount && item.DueDate < today,
+                !item.IsCancelled && item.PaidAmount.Amount < item.DueAmount.Amount && item.DueDate < today,
+                item.IsCancelled,
+                item.CancelledDate,
                 item.PrincipalAmount?.Amount,
                 item.InterestAmount?.Amount,
                 item.RemainingBalance?.Amount))
@@ -715,23 +803,42 @@ private static async Task<IResult> DownloadLoanSchedulePdfAsync(
                 .Select(c => c.DocumentType + " " + c.DocumentNumber)
                 .FirstOrDefault() ?? "No disponible",
 
+            CustomerPhone = dbContext.Customers
+                .Where(c =>
+                    c.Id == l.CustomerId &&
+                    c.TenantId == tenantId)
+                .Select(c => c.Phone)
+                .FirstOrDefault(),
+
+            ProductName = dbContext.LoanProducts
+                .Where(p => p.Id == l.LoanProductId)
+                .Select(p => p.Name)
+                .FirstOrDefault() ?? "Desconocido",
+
             l.PrincipalAmount,
             l.InterestRate,
             l.InterestType,
             l.Frequency,
+            l.TermDays,
             l.NumberOfPayments,
-            l.TotalAmount,
+            l.DisbursementDate,
             l.FirstPaymentDate,
+            l.Commission,
+            l.TotalInterest,
+            l.TotalAmount,
+            l.PaidAmount,
+            l.BalanceAmount,
+            l.Status,
 
-TenantName = dbContext.Tenants
-    .Where(t => t.Id == tenantId)
-    .Select(t => t.Name)
-    .FirstOrDefault() ?? "Organización",
+            TenantName = dbContext.Tenants
+                .Where(t => t.Id == tenantId)
+                .Select(t => t.Name)
+                .FirstOrDefault() ?? "Organización",
 
-TenantLogoUrl = dbContext.Tenants
-    .Where(t => t.Id == tenantId)
-    .Select(t => t.LogoUrl)
-    .FirstOrDefault(),
+            TenantLogoUrl = dbContext.Tenants
+                .Where(t => t.Id == tenantId)
+                .Select(t => t.LogoUrl)
+                .FirstOrDefault(),
 
             Schedule = l.Schedule
                 .OrderBy(s => s.PaymentNumber)
@@ -740,7 +847,11 @@ TenantLogoUrl = dbContext.Tenants
                     s.PaymentNumber,
                     s.DueDate,
                     s.DueAmount,
-                    s.PaidAmount
+                    s.PaidAmount,
+                    s.PrincipalAmount,
+                    s.InterestAmount,
+                    s.RemainingBalance,
+                    s.IsCancelled
                 })
                 .ToList()
         })
@@ -751,14 +862,27 @@ TenantLogoUrl = dbContext.Tenants
         return TypedResults.NotFound();
     }
 
+    var today = DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
     var scheduleItems = loanData.Schedule
-        .Select(item => new PaymentScheduleItemData(
-            item.PaymentNumber,
-            item.DueDate,
-            item.DueAmount.Amount,
-            item.PaidAmount.Amount,
-            item.DueAmount.Amount - item.PaidAmount.Amount
-        ))
+        .Select(item =>
+        {
+            var dueAmount = item.DueAmount.Amount;
+            var paidAmount = item.PaidAmount.Amount;
+            var isPaid = paidAmount >= dueAmount;
+
+            return new PaymentScheduleItemData(
+                item.PaymentNumber,
+                item.DueDate,
+                item.PrincipalAmount?.Amount,
+                item.InterestAmount?.Amount,
+                dueAmount,
+                paidAmount,
+                Math.Max(0m, dueAmount - paidAmount),
+                item.RemainingBalance?.Amount,
+                isPaid,
+                !item.IsCancelled && !isPaid && item.DueDate < today,
+                item.IsCancelled);
+        })
         .ToList();
 
     var data = new PaymentScheduleData(
@@ -767,15 +891,24 @@ TenantLogoUrl = dbContext.Tenants
         loanData.LoanNumber,
         loanData.CustomerName,
         loanData.CustomerDocument,
+        loanData.CustomerPhone,
+        loanData.ProductName,
         loanData.PrincipalAmount.Amount,
         loanData.InterestRate,
         loanData.InterestType.ToString(),
         loanData.Frequency.ToString(),
+        loanData.TermDays,
         loanData.NumberOfPayments,
-        loanData.TotalAmount.Amount,
+        loanData.DisbursementDate,
         loanData.FirstPaymentDate,
-        scheduleItems
-    );
+        loanData.Commission?.Amount,
+        loanData.TotalInterest.Amount,
+        loanData.TotalAmount.Amount,
+        loanData.PaidAmount.Amount,
+        loanData.BalanceAmount.Amount,
+        loanData.PrincipalAmount.Currency.Code,
+        loanData.Status.ToString(),
+        scheduleItems);
 
     var pdfBytes = await pdfGenerator.GeneratePdfAsync(
         data,
@@ -786,6 +919,286 @@ TenantLogoUrl = dbContext.Tenants
         "application/pdf",
         $"Cronograma_{loanData.LoanNumber}_{clock.UtcNow:yyyyMMdd}.pdf");
 }
+
+    private static async Task<IResult> CalculateSettlementAsync(
+        Guid id,
+        ICurrentUser currentUser,
+        LendingDbContext dbContext,
+        IClock clock,
+        DateOnly? settlementDate,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.TenantId.HasValue)
+        {
+            return TenantRequired();
+        }
+
+        var tenantId = currentUser.TenantId.Value;
+        var loan = await dbContext.Loans
+            .Include(l => l.Schedule)
+            .FirstOrDefaultAsync(l => l.Id == id && l.TenantId == tenantId, cancellationToken);
+
+        if (loan == null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        if (loan.Status != LoanStatus.Active)
+        {
+            return TypedResults.BadRequest("Solo se pueden liquidar préstamos activos.");
+        }
+
+        var calculationDate = settlementDate ?? DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
+        var outstandingPrincipal = loan.CalculateOutstandingPrincipal();
+        var accruedInterest = loan.CalculateAccruedInterest(calculationDate);
+        var totalSettlement = loan.CalculateEarlySettlementAmount(calculationDate);
+
+        return Results.Ok(new
+        {
+            LoanId = loan.Id,
+            LoanNumber = loan.LoanNumber,
+            CalculationDate = calculationDate,
+            OutstandingPrincipal = outstandingPrincipal.Amount,
+            AccruedInterest = accruedInterest.Amount,
+            TotalSettlementAmount = totalSettlement.Amount,
+            Currency = loan.PrincipalAmount.Currency.Code,
+            Savings = loan.TotalInterest.Amount - accruedInterest.Amount
+        });
+    }
+
+    private static async Task<IResult> SettleLoanAsync(
+        Guid id,
+        ICurrentUser currentUser,
+        LendingDbContext dbContext,
+        IClock clock,
+        SettleLoanRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.TenantId.HasValue)
+        {
+            return TenantRequired();
+        }
+
+        var tenantId = currentUser.TenantId.Value;
+        var loan = await dbContext.Loans
+            .Include(l => l.Schedule)
+            .Include(l => l.Payments)
+            .FirstOrDefaultAsync(l => l.Id == id && l.TenantId == tenantId, cancellationToken);
+
+        if (loan == null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var settlementAmount = Money.Of(request.Amount, loan.PrincipalAmount.Currency);
+        var outstandingPrincipal = loan.CalculateOutstandingPrincipal();
+        var accruedInterest = loan.CalculateAccruedInterest(request.SettlementDate);
+        var totalSettlement = Money.Of(outstandingPrincipal.Amount + accruedInterest.Amount, loan.PrincipalAmount.Currency);
+
+        // Crear registro de liquidación
+        var earlySettlement = EarlySettlement.Create(
+            tenantId,
+            loan.Id,
+            outstandingPrincipal,
+            accruedInterest,
+            totalSettlement,
+            settlementAmount,
+            request.SettlementDate,
+            request.Notes,
+            clock.UtcNow);
+
+        dbContext.EarlySettlements.Add(earlySettlement);
+
+        // Liquidar el préstamo
+        loan.SettleEarly(settlementAmount, request.SettlementDate, currentUser.UserId.GetValueOrDefault(), clock.UtcNow);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Results.Ok(new
+        {
+            loan.Id,
+            loan.LoanNumber,
+            loan.Status,
+            SettlementDate = request.SettlementDate,
+            AmountPaid = settlementAmount.Amount,
+            OutstandingPrincipal = outstandingPrincipal.Amount,
+            AccruedInterest = accruedInterest.Amount
+        });
+    }
+
+    private static async Task<IResult> SimulateRefinancingAsync(
+        Guid id,
+        ICurrentUser currentUser,
+        LendingDbContext dbContext,
+        IClock clock,
+        SimulateRefinancingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.TenantId.HasValue)
+        {
+            return TenantRequired();
+        }
+
+        var tenantId = currentUser.TenantId.Value;
+        var loan = await dbContext.Loans
+            .Include(l => l.Schedule)
+            .FirstOrDefaultAsync(l => l.Id == id && l.TenantId == tenantId, cancellationToken);
+
+        if (loan == null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        if (loan.Status != LoanStatus.Active)
+        {
+            return TypedResults.BadRequest("Solo se pueden refinanciar préstamos activos.");
+        }
+
+        var refinancingDate = request.RefinancingDate ?? DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
+        var outstandingPrincipal = loan.CalculateOutstandingPrincipal();
+        var accruedInterest = loan.CalculateAccruedInterest(refinancingDate);
+        var totalDebt = Money.Of(outstandingPrincipal.Amount + accruedInterest.Amount, loan.PrincipalAmount.Currency);
+
+        var additionalAmount = request.AdditionalAmount ?? 0m;
+        var newPrincipal = Money.Of(totalDebt.Amount + additionalAmount, loan.PrincipalAmount.Currency);
+        var newInterestRate = request.NewInterestRate ?? loan.InterestRate;
+
+        // Calcular nuevo cronograma basado en los parámetros
+        var newNumberOfPayments = request.NewTermMonths ?? loan.NumberOfPayments;
+        var newTotalInterest = newPrincipal.Amount * (newInterestRate / 100);
+        var newTotalAmount = newPrincipal.Amount + newTotalInterest;
+        var newPaymentAmount = newTotalAmount / newNumberOfPayments;
+
+        return Results.Ok(new
+        {
+            OriginalLoanId = loan.Id,
+            OriginalLoanNumber = loan.LoanNumber,
+            RefinancingDate = refinancingDate,
+            OutstandingPrincipal = outstandingPrincipal.Amount,
+            AccruedInterest = accruedInterest.Amount,
+            TotalDebt = totalDebt.Amount,
+            AdditionalAmount = additionalAmount,
+            NewPrincipal = newPrincipal.Amount,
+            NewInterestRate = newInterestRate,
+            NewTermMonths = newNumberOfPayments,
+            NewPaymentAmount = newPaymentAmount,
+            NewTotalAmount = newTotalAmount,
+            Currency = loan.PrincipalAmount.Currency.Code
+        });
+    }
+
+    private static async Task<IResult> RefinanceLoanAsync(
+        Guid id,
+        ICurrentUser currentUser,
+        LendingDbContext dbContext,
+        IClock clock,
+        RefinanceLoanRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.TenantId.HasValue)
+        {
+            return TenantRequired();
+        }
+
+        var tenantId = currentUser.TenantId.Value;
+        var originalLoan = await dbContext.Loans
+            .Include(l => l.Schedule)
+            .FirstOrDefaultAsync(l => l.Id == id && l.TenantId == tenantId, cancellationToken);
+
+        if (originalLoan == null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        if (originalLoan.Status != LoanStatus.Active)
+        {
+            return TypedResults.BadRequest("Solo se pueden refinanciar préstamos activos.");
+        }
+
+        // Calcular deuda total
+        var outstandingPrincipal = originalLoan.CalculateOutstandingPrincipal();
+        var accruedInterest = originalLoan.CalculateAccruedInterest(request.RefinancingDate);
+        var totalDebt = Money.Of(outstandingPrincipal.Amount + accruedInterest.Amount, originalLoan.PrincipalAmount.Currency);
+
+        var additionalAmount = request.AdditionalAmount ?? 0m;
+        var newPrincipal = Money.Of(totalDebt.Amount + additionalAmount, originalLoan.PrincipalAmount.Currency);
+        
+        // Obtener el producto de préstamo
+        var loanProduct = await dbContext.LoanProducts
+            .FirstOrDefaultAsync(p => p.Id == request.NewLoanProductId && p.TenantId == tenantId, cancellationToken);
+
+        if (loanProduct == null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        // Generar número de préstamo
+        var loanNumber = await GenerateLoanNumberAsync(dbContext, tenantId, cancellationToken);
+
+        // Crear nuevo préstamo
+        var newLoan = Loan.Create(
+            tenantId,
+            originalLoan.CustomerId,
+            loanProduct.Id,
+            loanNumber,
+            newPrincipal,
+            request.NewInterestRate,
+            loanProduct.InterestType,
+            loanProduct.Frequency,
+            request.NewTermDays,
+            request.NewNumberOfPayments,
+            request.RefinancingDate,
+            request.FirstPaymentDate,
+            null,
+            clock.UtcNow);
+
+        // Vincular como refinanciamiento
+        newLoan.SetAsRefinancingOf(originalLoan.Id, clock.UtcNow);
+
+        // Generar cronograma del nuevo préstamo
+        newLoan.GenerateSchedule(clock.UtcNow);
+
+        // Aprobar y desembolsar automáticamente el nuevo préstamo
+        newLoan.Approve(currentUser.UserId.GetValueOrDefault(), clock.UtcNow);
+        newLoan.Disburse(currentUser.UserId.GetValueOrDefault(), clock.UtcNow);
+
+        dbContext.Loans.Add(newLoan);
+
+        // Marcar el préstamo original como refinanciado
+        originalLoan.MarkAsRefinanced(request.RefinancingDate, clock.UtcNow);
+
+        // Crear registro de refinanciamiento
+        var refinancing = LoanRefinancing.Create(
+            tenantId,
+            originalLoan.Id,
+            newLoan.Id,
+            outstandingPrincipal,
+            accruedInterest,
+            totalDebt,
+            newPrincipal,
+            request.NewInterestRate,
+            request.RefinancingDate,
+            request.Notes,
+            clock.UtcNow);
+
+        dbContext.LoanRefinancings.Add(refinancing);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Results.Created($"/api/v1/loans/{newLoan.Id}", new
+        {
+            OriginalLoanId = originalLoan.Id,
+            OriginalLoanNumber = originalLoan.LoanNumber,
+            NewLoanId = newLoan.Id,
+            NewLoanNumber = newLoan.LoanNumber,
+            RefinancingDate = request.RefinancingDate,
+            OutstandingPrincipal = outstandingPrincipal.Amount,
+            AccruedInterest = accruedInterest.Amount,
+            TotalDebt = totalDebt.Amount,
+            NewPrincipal = newPrincipal.Amount,
+            NewInterestRate = request.NewInterestRate
+        });
+    }
 
     private static async Task<string> GenerateLoanNumberAsync(
         LendingDbContext dbContext,
@@ -825,6 +1238,7 @@ TenantLogoUrl = dbContext.Tenants
         string LoanNumber,
         Guid CustomerId,
         string CustomerName,
+        string? CustomerPhotoUrl,
         decimal PrincipalAmount,
         decimal TotalAmount,
         decimal BalanceAmount,
@@ -839,6 +1253,7 @@ TenantLogoUrl = dbContext.Tenants
         string LoanNumber,
         Guid CustomerId,
         string CustomerName,
+        string? CustomerPhotoUrl,
         string? CustomerPhone,
         Guid LoanProductId,
         string ProductName,
@@ -890,7 +1305,30 @@ TenantLogoUrl = dbContext.Tenants
         DateOnly? PaidDate,
         bool IsPaid,
         bool IsOverdue,
+        bool IsCancelled,
+        DateOnly? CancelledDate,
         decimal? PrincipalAmount,
         decimal? InterestAmount,
         decimal? RemainingBalance);
+
+    public sealed record SettleLoanRequest(
+        decimal Amount,
+        DateOnly SettlementDate,
+        string? Notes);
+
+    public sealed record SimulateRefinancingRequest(
+        DateOnly? RefinancingDate,
+        decimal? AdditionalAmount,
+        decimal? NewInterestRate,
+        int? NewTermMonths);
+
+    public sealed record RefinanceLoanRequest(
+        Guid NewLoanProductId,
+        decimal NewInterestRate,
+        int NewTermDays,
+        int NewNumberOfPayments,
+        DateOnly RefinancingDate,
+        DateOnly FirstPaymentDate,
+        decimal? AdditionalAmount,
+        string? Notes);
 }

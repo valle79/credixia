@@ -32,6 +32,8 @@ export function CreateLoanPage() {
   const [commissionAmount, setCommissionAmount] = useState('')
   const [customInterestRate, setCustomInterestRate] = useState('')
   const [useCustomRate, setUseCustomRate] = useState(false)
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false)
 
   // Calcular días automáticamente según frecuencia
   const calculateTermDays = (freq: string, payments: string) => {
@@ -82,11 +84,51 @@ export function CreateLoanPage() {
 
   const { data: products } = useQuery({
     queryKey: ['loan-products', tenant?.id],
-    queryFn: () => loanProductsApi.list(true),
+    queryFn: () => loanProductsApi.list({ active: true }),
     enabled: !!tenant?.id,
   })
 
   const selectedProduct = products?.find((p) => p.id === productId)
+  const selectedCustomer = customers?.items.find((c) => c.id === customerId)
+  const currentPhoto = photoPreview ?? selectedCustomer?.photoUrl ?? null
+
+  const handleCustomerChange = (value: string) => {
+    setCustomerId(value)
+    setPhotoPreview(null)
+  }
+
+  const handlePhotoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || !customerId) return
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Archivo no válido', 'Selecciona una imagen JPG, PNG o WEBP.')
+      return
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Imagen demasiado grande', 'La foto no debe superar los 5 MB.')
+      return
+    }
+
+    const objectUrl = URL.createObjectURL(file)
+    setPhotoPreview(objectUrl)
+    setIsUploadingPhoto(true)
+
+    try {
+      const { photoUrl } = await customersApi.uploadPhoto(customerId, file)
+      setPhotoPreview(photoUrl)
+      void queryClient.invalidateQueries({ queryKey: ['customers'] })
+      toast.success('Foto subida', 'La foto del cliente se guardó correctamente.')
+    } catch (error) {
+      setPhotoPreview(selectedCustomer?.photoUrl ?? null)
+      toast.error('Error al subir foto', getErrorMessage(error))
+    } finally {
+      URL.revokeObjectURL(objectUrl)
+      setIsUploadingPhoto(false)
+    }
+  }
 
   // Calcular estimación de cuota
   const calculatePayment = () => {
@@ -101,17 +143,25 @@ export function CreateLoanPage() {
     const rate = interestRate / 100
 
     if (selectedProduct.interestType === 'Simple') {
-      // Interés simple: se aplica la tasa sobre el capital total
-      // Total = Capital + (Capital × Tasa)
+      // Interés plano: la tasa se aplica sobre el capital total.
       const totalInterest = principal * rate
       const totalAmount = principal + totalInterest
       return totalAmount / n
-    } else {
-      // Interés compuesto - fórmula de anualidad
-      const r = rate / n
-      const payment = (principal * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1)
-      return payment
     }
+
+    // Amortización francesa: cuota fija con interés sobre saldo pendiente.
+    const periodsPerYear: Record<string, number> = {
+      Daily: 365,
+      Weekly: 52,
+      Biweekly: 24,
+      Monthly: 12,
+      Quarterly: 4,
+    }
+    const r = rate / (periodsPerYear[selectedProduct.frequency] || 12)
+    if (r === 0) return principal / n
+
+    const factor = Math.pow(1 + r, n)
+    return (principal * r * factor) / (factor - 1)
   }
 
   const estimatedPayment = calculatePayment()
@@ -168,7 +218,7 @@ export function CreateLoanPage() {
                 <Select
                   label="Cliente"
                   value={customerId}
-                  onChange={(e) => setCustomerId(e.target.value)}
+                  onChange={(e) => handleCustomerChange(e.target.value)}
                   options={[
                     { value: '', label: 'Seleccionar cliente...' },
                     ...(customers?.items.map((c) => ({
@@ -178,6 +228,38 @@ export function CreateLoanPage() {
                   ]}
                   required
                 />
+
+                {customerId && (
+                  <div className="flex items-center gap-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-lg font-semibold text-slate-500">
+                      {currentPhoto ? (
+                        <img
+                          src={currentPhoto}
+                          alt={`Foto de ${selectedCustomer?.fullName ?? 'cliente'}`}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        (selectedCustomer?.fullName?.charAt(0) ?? '?').toUpperCase()
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-700">Foto del cliente</p>
+                      <p className="text-xs text-slate-500">
+                        JPG, PNG o WEBP. Máximo 5 MB.
+                      </p>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handlePhotoChange}
+                        disabled={isUploadingPhoto}
+                        className="mt-2 block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-brand-600 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-brand-700 disabled:opacity-60"
+                      />
+                    </div>
+                    {isUploadingPhoto && (
+                      <span className="shrink-0 text-xs font-medium text-slate-500">Subiendo…</span>
+                    )}
+                  </div>
+                )}
 
                 <Select
                   label="Producto de Préstamo"

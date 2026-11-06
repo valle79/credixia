@@ -156,7 +156,8 @@ export function CreateLoanProductPage() {
                 disabled={isEditing}
                 required
               >
-                <option value="Simple">Simple</option>
+                <option value="Simple">Simple (interés plano)</option>
+                <option value="French">Francés (cuota fija)</option>
                 <option value="Compound">Compuesto</option>
               </Select>
             </div>
