@@ -194,57 +194,22 @@ export function LoanDetailPage() {
   const handleSendPdfByWhatsApp = async () => {
     if (!whatsAppUrl) return
 
-    const canShareFiles =
-      typeof navigator !== 'undefined' &&
-      typeof navigator.share === 'function' &&
-      typeof navigator.canShare === 'function'
+    const whatsAppLink = document.createElement('a')
+    whatsAppLink.href = whatsAppUrl
+    whatsAppLink.target = '_blank'
+    whatsAppLink.rel = 'noopener noreferrer'
+    document.body.appendChild(whatsAppLink)
+    whatsAppLink.click()
+    whatsAppLink.remove()
 
-    if (!canShareFiles) {
-      window.open(whatsAppUrl, '_blank', 'noopener,noreferrer')
-      setShowScheduleModal(false)
-      setIsSharingPdf(true)
-      try {
-        await downloadSchedulePdf()
-        toast.success('PDF descargado', 'Adjunta el PDF descargado en WhatsApp para enviarlo.')
-      } catch (error) {
-        toast.error('No se pudo generar el PDF', getErrorMessage(error))
-      } finally {
-        setIsSharingPdf(false)
-      }
-      return
-    }
-
+    setShowScheduleModal(false)
     setIsSharingPdf(true)
-    try {
-      const blob = await loansApi.getSchedulePdf(id!)
-      const fileName = `Cronograma_${loan.loanNumber}.pdf`
-      const file = new File([blob], fileName, { type: 'application/pdf' })
-      const shareData: ShareData = {
-        files: [file],
-        title: `Cronograma de pagos ${loan.loanNumber}`,
-        text: scheduleMessage,
-      }
 
-      if (navigator.canShare(shareData)) {
-        await navigator.share(shareData)
-        setShowScheduleModal(false)
-      } else {
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = fileName
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        URL.revokeObjectURL(url)
-        window.open(whatsAppUrl, '_blank', 'noopener,noreferrer')
-        setShowScheduleModal(false)
-        toast.success('PDF descargado', 'Adjunta el PDF descargado en WhatsApp para enviarlo.')
-      }
+    try {
+      await downloadSchedulePdf()
+      toast.success('WhatsApp abierto', 'El PDF se descargó. Adjúntalo en la conversación.')
     } catch (error) {
-      if ((error as Error)?.name !== 'AbortError') {
-        toast.error('No se pudo compartir el PDF', getErrorMessage(error))
-      }
+      toast.error('No se pudo generar el PDF', getErrorMessage(error))
     } finally {
       setIsSharingPdf(false)
     }
