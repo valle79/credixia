@@ -12,6 +12,7 @@ import { useToast } from '../hooks/useToast';
 import { useAuth } from '../hooks/useAuth';
 import { ToastContainer } from '../components/ui/ToastContainer';
 import { getErrorMessage } from '../api/client';
+import { getMaxBirthDate, validateMinimumAge } from '../lib/validation';
 import type { CustomerReferenceDto } from '../api/types';
 
 type CustomerStatus = 'Active' | 'Suspended' | 'Blocked';
@@ -24,6 +25,7 @@ export function CustomerDetailPage() {
   const { tenant } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [showAddReference, setShowAddReference] = useState(false);
+  const [ageError, setAgeError] = useState('');
 
   const { data: customer, isLoading } = useQuery({
     queryKey: ['customer', tenant?.id, id],
@@ -98,9 +100,17 @@ export function CustomerDetailPage() {
       return entry ? String(entry) : undefined;
     };
 
+    const birthDate = value('birthDate') || '';
+    const ageValidation = validateMinimumAge(birthDate, 18);
+    if (!ageValidation.isValid) {
+      setAgeError(ageValidation.message ?? 'La fecha de nacimiento no es válida');
+      return;
+    }
+
+    setAgeError('');
     updateMutation.mutate({
       fullName: value('fullName') ?? '',
-      birthDate: value('birthDate') || undefined,
+      birthDate: birthDate || undefined,
       email: value('email') || undefined,
       phone: value('phone') || undefined,
       address: value('address') || undefined,
@@ -171,7 +181,14 @@ export function CustomerDetailPage() {
         <div className="flex items-center gap-3">
           {getStatusBadge(customer.status)}
           {!isEditing && (
-            <Button onClick={() => setIsEditing(true)}>Editar</Button>
+            <Button
+              onClick={() => {
+                setAgeError('');
+                setIsEditing(true);
+              }}
+            >
+              Editar
+            </Button>
           )}
         </div>
       </div>
@@ -193,6 +210,12 @@ export function CustomerDetailPage() {
                 name="birthDate"
                 type="date"
                 defaultValue={customer.birthDate || ''}
+                max={getMaxBirthDate(18)}
+                {...(ageError ? { error: ageError } : {})}
+                onChange={(event) => {
+                  const validation = validateMinimumAge(event.target.value, 18);
+                  setAgeError(validation.isValid ? '' : validation.message ?? '');
+                }}
               />
               <Input
                 label="Email"
@@ -252,7 +275,10 @@ export function CustomerDetailPage() {
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => setIsEditing(false)}
+                onClick={() => {
+                  setAgeError('');
+                  setIsEditing(false);
+                }}
               >
                 Cancelar
               </Button>

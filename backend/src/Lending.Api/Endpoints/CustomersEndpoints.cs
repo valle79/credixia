@@ -16,7 +16,7 @@ public static class CustomersEndpoints
 {
     private const string DocumentNumberUniqueIndex = "IX_customers_TenantId_DocumentNumber";
     private const string DuplicateDocumentMessage =
-        "Ya existe un cliente registrado con este número de documento en tu empresa";
+        "Este número de documento ya está registrado en tu empresa";
 
     public static IEndpointRouteBuilder MapCustomersEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -219,6 +219,8 @@ public static class CustomersEndpoints
         }
 
         var tenantId = currentUser.TenantId.Value;
+        var now = clock.UtcNow;
+        var currentDate = await GetTenantTodayAsync(dbContext, tenantId, clock, cancellationToken);
 
         Customer customer;
         try
@@ -229,7 +231,8 @@ public static class CustomersEndpoints
                 request.DocumentType,
                 request.DocumentNumber,
                 request.FullName,
-                clock.UtcNow,
+                now,
+                currentDate,
                 request.BirthDate);
 
             customer.Update(
@@ -244,7 +247,8 @@ public static class CustomersEndpoints
                 request.Occupation,
                 request.Employer,
                 request.MonthlyIncome,
-                clock.UtcNow);
+                now,
+                currentDate);
         }
         catch (DomainException exception)
         {
@@ -310,6 +314,12 @@ public static class CustomersEndpoints
             return TypedResults.NotFound();
         }
 
+        var currentDate = await GetTenantTodayAsync(
+            dbContext,
+            currentUser.TenantId.Value,
+            clock,
+            cancellationToken);
+
         try
         {
             customer.Update(
@@ -324,7 +334,8 @@ public static class CustomersEndpoints
                 request.Occupation,
                 request.Employer,
                 request.MonthlyIncome,
-                clock.UtcNow);
+                clock.UtcNow,
+                currentDate);
         }
         catch (DomainException exception)
         {
@@ -531,19 +542,29 @@ public static class CustomersEndpoints
             return TenantRequired();
         }
 
-        if (string.IsNullOrWhiteSpace(documentNumber) || documentNumber.Length < 3)
+        string normalizedDocumentType;
+        string normalizedDocumentNumber;
+        try
         {
-            return TypedResults.BadRequest(new { available = false, message = "Documento muy corto" });
+            normalizedDocumentType = Customer.NormalizeDocumentType(documentType);
+            normalizedDocumentNumber = Customer.NormalizeDocumentNumber(
+                normalizedDocumentType,
+                documentNumber);
         }
-
-        var normalized = documentNumber.Trim().ToUpperInvariant();
+        catch (DomainException exception)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "Documento inválido",
+                detail: exception.Message);
+        }
 
         var exists = await dbContext.Customers
             .AsNoTracking()
             .AnyAsync(
                 c => c.TenantId == currentUser.TenantId.Value &&
-                     c.DocumentType == documentType &&
-                     c.DocumentNumber == normalized,
+                     c.DocumentType == normalizedDocumentType &&
+                     c.DocumentNumber == normalizedDocumentNumber,
                 cancellationToken);
 
         if (exists)
@@ -560,6 +581,21 @@ public static class CustomersEndpoints
             available = true,
             message = "Documento disponible para registrar"
         });
+    }
+
+    private static async Task<DateOnly> GetTenantTodayAsync(
+        LendingDbContext dbContext,
+        Guid tenantId,
+        IClock clock,
+        CancellationToken cancellationToken)
+    {
+        var timeZoneId = await dbContext.TenantSettings
+            .AsNoTracking()
+            .Where(settings => settings.TenantId == tenantId)
+            .Select(settings => settings.Timezone)
+            .SingleOrDefaultAsync(cancellationToken);
+
+        return clock.Today(string.IsNullOrWhiteSpace(timeZoneId) ? "America/Lima" : timeZoneId);
     }
 
     private static ProblemHttpResult TenantRequired() =>

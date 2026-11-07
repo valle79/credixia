@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { customersApi } from '../api/customers.api'
 import { Card } from '../components/ui/Card'
@@ -9,7 +9,12 @@ import { Select } from '../components/ui/Select'
 import { getErrorMessage } from '../api/client'
 import { useToast } from '../hooks/useToast'
 import { useDebounce } from '../hooks/useDebounce'
-import { validateMinimumAge, getMaxBirthDate } from '../lib/validation'
+import {
+  getMaxBirthDate,
+  normalizeDocumentNumber,
+  validateDocumentFormat,
+  validateMinimumAge,
+} from '../lib/validation'
 import { ToastContainer } from '../components/ui/ToastContainer'
 import type { CreateCustomerRequest } from '../api/types'
 
@@ -39,11 +44,7 @@ export function CreateCustomerPage() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [photoError, setPhotoError] = useState('')
 
-  // Estado para validación de documento
-  const [documentValidation, setDocumentValidation] = useState<{
-    status: 'idle' | 'checking' | 'available' | 'duplicate' | 'error'
-    message: string
-  }>({ status: 'idle', message: '' })
+  const [documentFormatError, setDocumentFormatError] = useState('')
 
   // Estado para validación de edad
   const [ageValidation, setAgeValidation] = useState<{
@@ -51,62 +52,62 @@ export function CreateCustomerPage() {
     message?: string
   }>({ isValid: true })
 
+  const debouncedDocumentType = useDebounce(formData.documentType, 500)
   const debouncedDocumentNumber = useDebounce(formData.documentNumber, 500)
-  const abortControllerRef = useRef<AbortController | null>(null)
+  const normalizedDocumentNumber = normalizeDocumentNumber(formData.documentNumber)
+  const normalizedDebouncedDocumentNumber = normalizeDocumentNumber(debouncedDocumentNumber)
+  const currentDocumentFormat = formData.documentNumber.trim()
+    ? validateDocumentFormat(formData.documentType, normalizedDocumentNumber)
+    : null
+  const debouncedDocumentFormat = validateDocumentFormat(
+    debouncedDocumentType,
+    normalizedDebouncedDocumentNumber
+  )
+  const isDocumentDebouncing =
+    formData.documentNumber !== debouncedDocumentNumber ||
+    formData.documentType !== debouncedDocumentType
 
-  // Validar documento cuando cambie el número con debounce
-  useEffect(() => {
-    const validateDocument = async () => {
-      // No validar si el documento está vacío o es muy corto
-      if (!debouncedDocumentNumber || debouncedDocumentNumber.length < 3) {
-        setDocumentValidation({ status: 'idle', message: '' })
-        return
-      }
+  const documentCheckQuery = useQuery({
+    queryKey: [
+      'customers',
+      'check-document',
+      debouncedDocumentType,
+      normalizedDebouncedDocumentNumber,
+    ],
+    queryFn: ({ signal }) =>
+      customersApi.checkDocumentAvailability(
+        debouncedDocumentType,
+        normalizedDebouncedDocumentNumber,
+        signal
+      ),
+    enabled: Boolean(normalizedDebouncedDocumentNumber) && debouncedDocumentFormat.isValid,
+    retry: false,
+  })
 
-      // Cancelar validación anterior si existe
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
-      }
-
-      abortControllerRef.current = new AbortController()
-      setDocumentValidation({ status: 'checking', message: 'Verificando documento...' })
-
-      try {
-        const result = await customersApi.checkDocumentAvailability(
-          formData.documentType,
-          debouncedDocumentNumber
-        )
-
-        setDocumentValidation({
-          status: result.available ? 'available' : 'duplicate',
-          message: result.message,
-        })
-      } catch (error) {
-        // Ignorar errores de cancelación
-        if (error instanceof Error && error.name === 'CanceledError') {
-          return
-        }
-        setDocumentValidation({
-          status: 'error',
-          message: 'No se pudo verificar el documento',
-        })
+  const documentValidation: {
+    status: 'idle' | 'checking' | 'available' | 'duplicate' | 'error' | 'invalid'
+    message: string
+  } = (() => {
+    if (!formData.documentNumber.trim()) return { status: 'idle', message: '' }
+    if (documentFormatError) return { status: 'invalid', message: documentFormatError }
+    if (!currentDocumentFormat?.isValid) return { status: 'idle', message: '' }
+    if (isDocumentDebouncing || documentCheckQuery.isFetching) {
+      return { status: 'checking', message: 'Verificando documento...' }
+    }
+    if (documentCheckQuery.isError) {
+      return {
+        status: 'error',
+        message: 'No se pudo verificar el documento. Inténtalo nuevamente.',
       }
     }
-
-    validateDocument()
-
-    // Cleanup
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
+    if (documentCheckQuery.data) {
+      return {
+        status: documentCheckQuery.data.available ? 'available' : 'duplicate',
+        message: documentCheckQuery.data.message,
       }
     }
-  }, [debouncedDocumentNumber, formData.documentType])
-
-  // Limpiar validación cuando cambia el tipo de documento
-  useEffect(() => {
-    setDocumentValidation({ status: 'idle', message: '' })
-  }, [formData.documentType])
+    return { status: 'idle', message: '' }
+  })()
 
   const createMutation = useMutation({
     mutationFn: (data: CreateCustomerRequest) => customersApi.create(data),
@@ -143,6 +144,18 @@ export function CreateCustomerPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
+    const documentFormat = validateDocumentFormat(
+      formData.documentType,
+      normalizedDocumentNumber
+    )
+    if (!documentFormat.isValid) {
+      setDocumentFormatError(documentFormat.message ?? 'Documento inválido')
+      toast.error('Documento inválido', documentFormat.message)
+      return
+    }
+
+    setDocumentFormatError('')
+
     // Validar que el documento no esté duplicado
     if (documentValidation.status === 'duplicate') {
       toast.error('Documento duplicado', documentValidation.message)
@@ -150,13 +163,16 @@ export function CreateCustomerPage() {
     }
 
     // Validar edad mínima
-    if (!ageValidation.isValid) {
-      toast.error('Edad inválida', ageValidation.message || 'El cliente debe ser mayor de edad')
+    const ageResult = validateMinimumAge(formData.birthDate, 18)
+    setAgeValidation(ageResult)
+    if (!ageResult.isValid) {
+      toast.error('Edad inválida', ageResult.message || 'El cliente debe ser mayor de edad')
       return
     }
 
     const data: CreateCustomerRequest = {
       ...formData,
+      documentNumber: normalizedDocumentNumber,
       type: formData.type as CreateCustomerRequest['type'],
       monthlyIncome: formData.monthlyIncome ? parseFloat(formData.monthlyIncome) : undefined,
       birthDate: formData.birthDate || undefined,
@@ -165,16 +181,27 @@ export function CreateCustomerPage() {
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target
-    
+    const { name } = e.target
+    const value = name === 'documentNumber' ? e.target.value.toUpperCase() : e.target.value
+
     setFormData((prev) => ({ ...prev, [name]: value }))
 
+    if (name === 'documentNumber' || name === 'documentType') {
+      setDocumentFormatError('')
+    }
+
     // Validar edad cuando cambia la fecha de nacimiento
-    if (name === 'birthDate' && value) {
-      const validation = validateMinimumAge(value, 18)
-      setAgeValidation(validation)
-    } else if (name === 'birthDate' && !value) {
-      setAgeValidation({ isValid: true })
+    if (name === 'birthDate') {
+      setAgeValidation(value ? validateMinimumAge(value, 18) : { isValid: true })
+    }
+  }
+
+  const handleDocumentBlur = () => {
+    if (!formData.documentNumber.trim()) return
+
+    const format = validateDocumentFormat(formData.documentType, normalizedDocumentNumber)
+    if (!format.isValid) {
+      setDocumentFormatError(format.message ?? 'Documento inválido')
     }
   }
 
@@ -287,49 +314,46 @@ export function CreateCustomerPage() {
                 required
               />
 
-<Input
-  label="Número de Documento"
-  name="documentNumber"
-  value={formData.documentNumber}
-  onChange={handleChange}
-  maxLength={20}
-  {...(
-    documentValidation.status === 'duplicate' ||
-    documentValidation.status === 'error'
-      ? { error: documentValidation.message }
-      : {}
-  )}
-  {...(
-    documentValidation.status === 'checking' ||
-    documentValidation.status === 'available'
-      ? { helperText: documentValidation.message }
-      : {}
-  )}
-  success={documentValidation.status === 'available'}
-  required
-/>
+              <Input
+                label="Número de Documento"
+                name="documentNumber"
+                value={formData.documentNumber}
+                onChange={handleChange}
+                onBlur={handleDocumentBlur}
+                maxLength={20}
+                autoComplete="off"
+                {...(documentValidation.status === 'duplicate' ||
+                documentValidation.status === 'error' ||
+                documentValidation.status === 'invalid'
+                  ? { error: documentValidation.message }
+                  : {})}
+                {...(documentValidation.status === 'checking' ||
+                documentValidation.status === 'available'
+                  ? { helperText: documentValidation.message }
+                  : {})}
+                success={documentValidation.status === 'available'}
+                required
+              />
 
-<Input
-  label="Nombre Completo"
-  name="fullName"
-  value={formData.fullName}
-  onChange={handleChange}
-  required
-/>
+              <Input
+                label="Nombre Completo"
+                name="fullName"
+                value={formData.fullName}
+                onChange={handleChange}
+                required
+              />
 
-<Input
-  label="Fecha de Nacimiento"
-  type="date"
-  name="birthDate"
-  value={formData.birthDate}
-  onChange={handleChange}
-  max={getMaxBirthDate(18)}
-  {...(
-    !ageValidation.isValid && ageValidation.message
-      ? { error: ageValidation.message }
-      : {}
-  )}
-/>
+              <Input
+                label="Fecha de Nacimiento"
+                type="date"
+                name="birthDate"
+                value={formData.birthDate}
+                onChange={handleChange}
+                max={getMaxBirthDate(18)}
+                {...(ageValidation.isValid
+                  ? {}
+                  : { error: ageValidation.message })}
+              />
 
               <Input
                 label="Teléfono"

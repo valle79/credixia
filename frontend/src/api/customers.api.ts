@@ -64,11 +64,15 @@ export const customersApi = {
 
   checkDocumentAvailability: async (
     documentType: string,
-    documentNumber: string
+    documentNumber: string,
+    signal?: AbortSignal
   ): Promise<{ available: boolean; message: string }> => {
     const response = await apiClient.get<{ available: boolean; message: string }>(
       '/api/v1/customers/check-document',
-      { params: { documentType, documentNumber } }
+      {
+        params: { documentType, documentNumber },
+        ...(signal ? { signal } : {}),
+      }
     )
     return response.data
   },

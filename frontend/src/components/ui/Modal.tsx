@@ -1,3 +1,4 @@
+
 import { useEffect, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 
@@ -7,61 +8,89 @@ interface ModalProps {
   title: string
   children: ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
+  ariaLabel?: string
+  dismissible?: boolean
 }
 
-export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps) {
+const sizes = {
+  sm: 'max-w-sm',
+  md: 'max-w-md',
+  lg: 'max-w-lg',
+  xl: 'max-w-xl',
+}
+
+export function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  size = 'md',
+  ariaLabel,
+  dismissible = true,
+}: ModalProps) {
   useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+    if (!isOpen) return
+
+    const previousOverflow = document.body.style.overflow
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && dismissible) onClose()
     }
 
-    if (isOpen) {
-      document.addEventListener('keydown', handleEscape)
-      document.body.style.overflow = 'hidden'
-    }
+    document.addEventListener('keydown', handleEscape)
+    document.body.style.overflow = 'hidden'
 
     return () => {
       document.removeEventListener('keydown', handleEscape)
-      document.body.style.overflow = 'unset'
+      document.body.style.overflow = previousOverflow
     }
-  }, [isOpen, onClose])
+  }, [isOpen, onClose, dismissible])
 
   if (!isOpen) return null
-
-  const sizes = {
-    sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-xl',
-  }
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity"
-        onClick={onClose}
+        className="animate-modal-backdrop fixed inset-0 bg-slate-950/50 backdrop-blur-sm"
+        onClick={() => dismissible && onClose()}
+        aria-hidden="true"
       />
 
       {/* Modal */}
       <div className="flex min-h-full items-center justify-center p-4">
         <div
-          className={`relative w-full ${sizes[size]} transform rounded-lg bg-white shadow-xl transition-all`}
-          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+          aria-label={ariaLabel || title || 'Ventana de diálogo'}
+          className={`animate-modal-panel relative w-full ${sizes[size]} rounded-xl bg-white shadow-2xl`}
+          onClick={(event) => event.stopPropagation()}
         >
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-            <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
+          {/* Close button */}
+          {dismissible && (
             <button
+              type="button"
               onClick={onClose}
-              className="rounded-md text-slate-400 hover:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              aria-label="Cerrar ventana"
+              className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-all duration-200 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
-              <X className="h-5 w-5" />
+              <X size={18} strokeWidth={2} />
             </button>
-          </div>
+          )}
+
+          {/* Header */}
+          {title && (
+            <div className="px-6 pb-2 pt-6 pr-14">
+              <h3 className="text-lg font-semibold tracking-tight text-slate-900">
+                {title}
+              </h3>
+            </div>
+          )}
 
           {/* Content */}
-          <div className="px-6 py-4">{children}</div>
+          <div className={title ? 'px-6 pb-6 pt-3' : 'p-6'}>
+            {children}
+          </div>
         </div>
       </div>
     </div>

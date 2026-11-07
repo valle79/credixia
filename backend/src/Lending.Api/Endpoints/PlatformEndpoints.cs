@@ -423,8 +423,13 @@ public static class PlatformEndpoints
         return new string(password.OrderBy(_ => random.Next()).ToArray());
     }
 
-    private static string NormalizePhoneNumber(string phone)
+    private static string NormalizePhoneNumber(string? phone)
     {
+        if (string.IsNullOrWhiteSpace(phone))
+        {
+            return string.Empty;
+        }
+
         // Eliminar espacios, guiones y paréntesis
         var cleanPhone = new string(phone.Where(char.IsDigit).ToArray());
         
@@ -627,7 +632,7 @@ public static class PlatformEndpoints
         string Name, 
         string OwnerEmail, 
         string OwnerFullName,
-        string OwnerPhone);
+        string? OwnerPhone);
     
     public sealed record CreateTenantResponse(
         Guid Id,

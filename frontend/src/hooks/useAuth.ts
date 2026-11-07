@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth.api'
@@ -42,15 +43,23 @@ export function useAuth() {
     },
   })
 
-  const logoutMutation = useMutation({
-    mutationFn: () => authApi.logout(),
-    onSettled: () => {
-      // Siempre limpiar la sesión, incluso si la API falla
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
+
+  const logout = () => {
+    if (isLoggingOut) return
+
+    setIsLoggingOut(true)
+
+    // La revocación en servidor ocurre en segundo plano. La sesión local se
+    // limpia sin esperar la red para que el cierre se sienta inmediato.
+    void authApi.logout().catch(() => undefined)
+
+    window.setTimeout(() => {
       clearSession()
       queryClient.clear()
       navigate('/login', { replace: true })
-    },
-  })
+    }, 350)
+  }
 
   const switchTenantMutation = useMutation({
     mutationFn: (tenantId: string) => authApi.switchTenant(tenantId),
@@ -85,8 +94,8 @@ export function useAuth() {
     currentSession,
     hasPermission,
     login: loginMutation.mutate,
-    logout: logoutMutation.mutate,
-    isLoggingOut: logoutMutation.isPending,
+    logout,
+    isLoggingOut,
     switchTenant: switchTenantMutation.mutate,
     isLoggingIn: loginMutation.isPending,
     loginError: loginMutation.error ? getErrorMessage(loginMutation.error) : null,

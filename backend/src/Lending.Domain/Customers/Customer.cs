@@ -28,8 +28,9 @@ public sealed class Customer : Entity
     {
         TenantId = tenantId;
         Type = type;
-        DocumentType = NormalizeDocumentType(documentType);
-        DocumentNumber = NormalizeDocumentNumber(documentNumber);
+        var normalizedDocumentType = NormalizeDocumentType(documentType);
+        DocumentType = normalizedDocumentType;
+        DocumentNumber = NormalizeDocumentNumber(normalizedDocumentType, documentNumber);
         FullName = NormalizeName(fullName);
         Status = CustomerStatus.Active;
         CreatedAt = now;
@@ -87,6 +88,7 @@ public sealed class Customer : Entity
         string documentNumber,
         string fullName,
         DateTimeOffset now,
+        DateOnly currentDate,
         DateOnly? birthDate = null)
     {
         if (tenantId == Guid.Empty)
@@ -94,13 +96,15 @@ public sealed class Customer : Entity
             throw new ArgumentException("Tenant identifier cannot be empty.", nameof(tenantId));
         }
 
+        EnsureTimestamp(now);
+        EnsureCurrentDate(currentDate);
+
         // Validar edad mínima si se proporciona fecha de nacimiento
         if (birthDate.HasValue)
         {
-            ValidateMinimumAge(birthDate.Value, DateOnly.FromDateTime(now.Date));
+            ValidateMinimumAge(birthDate.Value, currentDate);
         }
 
-        EnsureTimestamp(now);
         var customer = new Customer(tenantId, type, documentType, documentNumber, fullName, now);
         customer.BirthDate = birthDate;
         return customer;
@@ -118,14 +122,16 @@ public sealed class Customer : Entity
         string? occupation,
         string? employer,
         decimal? monthlyIncome,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        DateOnly currentDate)
     {
         EnsureTimestamp(now);
+        EnsureCurrentDate(currentDate);
 
         // Validar edad mínima si se proporciona fecha de nacimiento
         if (birthDate.HasValue)
         {
-            ValidateMinimumAge(birthDate.Value, DateOnly.FromDateTime(now.Date));
+            ValidateMinimumAge(birthDate.Value, currentDate);
         }
 
         FullName = NormalizeName(fullName);
@@ -242,7 +248,7 @@ public sealed class Customer : Entity
         return trimmed;
     }
 
-    private static string NormalizeDocumentType(string? documentType)
+    public static string NormalizeDocumentType(string? documentType)
     {
         if (string.IsNullOrWhiteSpace(documentType))
         {
@@ -261,23 +267,41 @@ public sealed class Customer : Entity
         return normalized;
     }
 
-    private static string NormalizeDocumentNumber(string? documentNumber)
+    public static string NormalizeDocumentNumber(string? documentType, string? documentNumber)
     {
+        var normalizedDocumentType = NormalizeDocumentType(documentType);
+
         if (string.IsNullOrWhiteSpace(documentNumber))
         {
             throw new DomainException("customer.document_number.required", "El número de documento es requerido.");
         }
 
-        var trimmed = documentNumber.Trim();
+        var normalized = documentNumber.Trim().ToUpperInvariant();
         
-        if (trimmed.Length > DocumentMaxLength)
+        if (normalized.Length > DocumentMaxLength)
         {
             throw new DomainException(
                 "customer.document_number.too_long",
                 $"El número de documento no puede exceder {DocumentMaxLength} caracteres.");
         }
 
-        return trimmed;
+        var isValid = normalizedDocumentType switch
+        {
+            "DNI" => normalized.Length == 8 && normalized.All(char.IsAsciiDigit),
+            "RUC" => normalized.Length == 11 && normalized.All(char.IsAsciiDigit),
+            "CE" => normalized.Length is >= 9 and <= 12 && normalized.All(char.IsAsciiLetterOrDigit),
+            "PASAPORTE" => normalized.Length is >= 6 and <= 20 && normalized.All(char.IsAsciiLetterOrDigit),
+            _ => false,
+        };
+
+        if (!isValid)
+        {
+            throw new DomainException(
+                "customer.document_number.invalid",
+                $"El número de documento no es válido para {normalizedDocumentType}.");
+        }
+
+        return normalized;
     }
 
     private static void EnsureTimestamp(DateTimeOffset now)
@@ -288,6 +312,14 @@ public sealed class Customer : Entity
         }
     }
 
+    private static void EnsureCurrentDate(DateOnly currentDate)
+    {
+        if (currentDate == default)
+        {
+            throw new ArgumentException("A valid business date is required.", nameof(currentDate));
+        }
+    }
+
     private static void ValidateMinimumAge(DateOnly birthDate, DateOnly currentDate)
     {
         const int MinimumAgeYears = 18;
@@ -295,7 +327,7 @@ public sealed class Customer : Entity
         // Validar que la fecha de nacimiento no sea futura
         if (birthDate > currentDate)
         {
-            throw new DomainException("customer.birthdate.future", "La fecha de nacimiento no puede ser futura.");
+            throw new DomainException("customer.birthdate.future", "La fecha de nacimiento no puede ser futura");
         }
 
         // Calcular la edad exacta
@@ -312,7 +344,7 @@ public sealed class Customer : Entity
         {
             throw new DomainException(
                 "customer.age.underage",
-                $"El cliente debe tener al menos {MinimumAgeYears} años para poder registrarse.");
+                $"El cliente debe tener al menos {MinimumAgeYears} años para poder registrarse");
         }
     }
 }

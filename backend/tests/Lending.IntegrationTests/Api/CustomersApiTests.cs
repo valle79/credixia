@@ -21,7 +21,9 @@ public sealed class CustomersApiTests : IDisposable
 {
     private const string Password = "Sup3rSecret!Pass";
     private const string DuplicateDocumentMessage =
-        "Ya existe un cliente registrado con este número de documento en tu empresa";
+        "Este número de documento ya está registrado en tu empresa";
+    private const string UnderageMessage =
+        "El cliente debe tener al menos 18 años para poder registrarse";
 
     private readonly PostgresFixture _fixture;
     private readonly Pbkdf2PasswordHasher _passwordHasher = new();
@@ -160,6 +162,122 @@ public sealed class CustomersApiTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task Check_document_reports_availability_in_tenant_and_ignores_other_tenants()
+    {
+        var firstEmail = NewEmail();
+        var firstTenant = await SeedTenantForUserAsync(firstEmail);
+        using var firstClient = await CreateAuthenticatedClientAsync(
+            firstEmail,
+            firstTenant.TenantSlug);
+
+        var documentNumber = NewDocumentNumber();
+
+        using (var available = await CheckDocumentAsync(firstClient, documentNumber))
+        {
+            Assert.Equal(HttpStatusCode.OK, available.StatusCode);
+            using var payload = JsonDocument.Parse(await available.Content.ReadAsStringAsync());
+            Assert.True(payload.RootElement.GetProperty("available").GetBoolean());
+        }
+
+        using (var created = await PostCustomerAsync(firstClient, documentNumber))
+        {
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        }
+
+        using (var duplicate = await CheckDocumentAsync(firstClient, documentNumber))
+        {
+            Assert.Equal(HttpStatusCode.OK, duplicate.StatusCode);
+            using var payload = JsonDocument.Parse(await duplicate.Content.ReadAsStringAsync());
+            Assert.False(payload.RootElement.GetProperty("available").GetBoolean());
+            Assert.Equal(
+                DuplicateDocumentMessage,
+                payload.RootElement.GetProperty("message").GetString());
+        }
+
+        var secondEmail = NewEmail();
+        var secondTenant = await SeedTenantForUserAsync(secondEmail);
+        using var secondClient = await CreateAuthenticatedClientAsync(
+            secondEmail,
+            secondTenant.TenantSlug);
+
+        using var otherTenant = await CheckDocumentAsync(secondClient, documentNumber);
+        Assert.Equal(HttpStatusCode.OK, otherTenant.StatusCode);
+        using var otherPayload = JsonDocument.Parse(
+            await otherTenant.Content.ReadAsStringAsync());
+        Assert.True(otherPayload.RootElement.GetProperty("available").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Check_document_rejects_invalid_format()
+    {
+        var email = NewEmail();
+        var tenant = await SeedTenantForUserAsync(email);
+        using var client = await CreateAuthenticatedClientAsync(email, tenant.TenantSlug);
+
+        using var response = await CheckDocumentAsync(client, "123");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Contains("DNI", payload.RootElement.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public async Task Underage_birth_date_is_rejected_on_create_and_update()
+    {
+        var email = NewEmail();
+        var tenant = await SeedTenantForUserAsync(email);
+        using var client = await CreateAuthenticatedClientAsync(email, tenant.TenantSlug);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        using (var underageCreate = await PostCustomerAsync(
+            client,
+            NewDocumentNumber(),
+            today.AddYears(-17)))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, underageCreate.StatusCode);
+            using var payload = JsonDocument.Parse(
+                await underageCreate.Content.ReadAsStringAsync());
+            Assert.Equal(
+                UnderageMessage,
+                payload.RootElement.GetProperty("detail").GetString());
+        }
+
+        var documentNumber = NewDocumentNumber();
+        var adultBirthDate = today.AddYears(-30);
+        string customerId;
+
+        using (var created = await PostCustomerAsync(client, documentNumber, adultBirthDate))
+        {
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            using var payload = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            customerId = payload.RootElement.GetProperty("id").GetString()!;
+        }
+
+        using (var underageUpdate = await PutCustomerBirthDateAsync(
+            client,
+            customerId,
+            today.AddYears(-17)))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, underageUpdate.StatusCode);
+            using var payload = JsonDocument.Parse(
+                await underageUpdate.Content.ReadAsStringAsync());
+            Assert.Equal(
+                UnderageMessage,
+                payload.RootElement.GetProperty("detail").GetString());
+        }
+
+        await using var context = _fixture.CreateContext();
+        var storedBirthDate = await context.Customers
+            .Where(customer => customer.TenantId == tenant.TenantId)
+            .Where(customer => customer.DocumentNumber == documentNumber)
+            .Select(customer => customer.BirthDate)
+            .SingleAsync();
+
+        Assert.Equal(adultBirthDate, storedBirthDate);
+    }
+
     public void Dispose() => _factory.Dispose();
 
     private HttpClient CreateClient() =>
@@ -193,7 +311,8 @@ public sealed class CustomersApiTests : IDisposable
 
     private static Task<HttpResponseMessage> PostCustomerAsync(
         HttpClient client,
-        string documentNumber) =>
+        string documentNumber,
+        DateOnly? birthDate = null) =>
         client.PostAsJsonAsync(
             "/api/v1/customers",
             new
@@ -202,6 +321,26 @@ public sealed class CustomersApiTests : IDisposable
                 documentType = "DNI",
                 documentNumber,
                 fullName = "Cliente de Prueba",
+                birthDate,
+            });
+
+    private static async Task<HttpResponseMessage> CheckDocumentAsync(
+        HttpClient client,
+        string documentNumber,
+        string documentType = "DNI") =>
+        await client.GetAsync(
+            $"/api/v1/customers/check-document?documentType={documentType}&documentNumber={documentNumber}");
+
+    private static Task<HttpResponseMessage> PutCustomerBirthDateAsync(
+        HttpClient client,
+        string customerId,
+        DateOnly birthDate) =>
+        client.PutAsJsonAsync(
+            $"/api/v1/customers/{customerId}",
+            new
+            {
+                fullName = "Cliente de Prueba",
+                birthDate,
             });
 
     private async Task<SeededTenant> SeedTenantForUserAsync(string email)
@@ -238,7 +377,7 @@ public sealed class CustomersApiTests : IDisposable
     private static string NewEmail() => $"user-{Guid.NewGuid():N}@example.test";
 
     private static string NewDocumentNumber() =>
-        Random.Shared.NextInt64(10_000_000_000_000, 99_999_999_999_999)
+        Random.Shared.Next(10_000_000, 99_999_999)
             .ToString(CultureInfo.InvariantCulture);
 
     private static TenantSlug NewSlug() =>

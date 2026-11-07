@@ -102,7 +102,6 @@ interface SidebarProps {
   logoUrl: string | null
   userFullName: string
   userEmail: string
-  isPlatformAdmin: boolean
   onNavigate: (href: string) => void
   onLogout: () => void
 }
@@ -115,7 +114,6 @@ function Sidebar({
   logoUrl,
   userFullName,
   userEmail,
-  isPlatformAdmin,
   onNavigate,
   onLogout,
 }: SidebarProps) {
@@ -221,17 +219,6 @@ function Sidebar({
           </div>
         </div>
 
-        {isPlatformAdmin && (
-          <button
-            type="button"
-            onClick={() => onNavigate('/select-tenant')}
-            className="mt-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
-          >
-            <Building2 className="h-3.5 w-3.5" />
-            Cambiar organización
-          </button>
-        )}
-
         <Button variant="ghost" size="sm" className="mt-1 w-full justify-start" onClick={onLogout}>
           <LogOut className="h-4 w-4" />
           Cerrar sesión
@@ -325,7 +312,6 @@ export function AppLayout() {
 
   const confirmLogout = () => {
     logout()
-    setShowLogoutModal(false)
   }
 
   const sidebar = (
@@ -337,7 +323,6 @@ export function AppLayout() {
       logoUrl={isPlatformArea ? null : tenant?.logoUrl ?? null}
       userFullName={user.fullName}
       userEmail={user.email}
-      isPlatformAdmin={isPlatformAdmin}
       onNavigate={handleNavigate}
       onLogout={handleLogout}
     />
