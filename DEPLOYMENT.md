@@ -1,5 +1,7 @@
 # 🚀 Guía de Despliegue - Credixia
 
+<!-- Last updated: 2026-11-06 -->
+
 Esta guía detalla cómo desplegar el proyecto en producción usando:
 - **Frontend**: Netlify (hosting estático + CDN)
 - **Backend**: Render (contenedor Docker desde Docker Hub)
